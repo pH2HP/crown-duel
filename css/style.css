@@ -1,0 +1,38 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+
+body {
+  background: #0d1522 radial-gradient(circle at 50% 18%, #182a44 0%, #0d1522 72%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-family: system-ui, "Microsoft YaHei", "PingFang SC", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+canvas {
+  display: block;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  border-radius: 14px;
+  box-shadow: 0 12px 60px rgba(0, 0, 0, 0.55);
+}
+
+#muteBtn {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  font-size: 20px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  z-index: 10;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s;
+}
+#muteBtn:hover { background: rgba(255, 255, 255, 0.2); }
