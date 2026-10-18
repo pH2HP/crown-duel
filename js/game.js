@@ -1,16 +1,14 @@
 "use strict";
 /* ============================================================
-   皇冠对决 Crown Duel  v2.0
+   皇冠对决 Crown Duel  v3.0
    HTML5 Canvas 塔防卡牌对战（单机 vs AI / 本地双人对战）
    灵感来自《部落冲突：皇室战争》的对战玩法，代码与美术均为原创实现。
 
-   v2.0 更新：
-   - 血条按阵营着色（我方绿 / 敌方红），单位增加阵营光圈
-   - 单位移速下调；防御塔血量、攻速与射程提升
-   - 卡牌等级 1~9（每级 +10% 血量伤害），金币升级，本地存档
-   - 奖杯系统 + 5 个竞技场段位（不同战场配色）
-   - 本地双人对战模式（同屏上下分阵营，支持多点触控）
-   - 卡牌扩充至 12 种（新增骑士 / 炮手 / 巨人 / 治疗术）
+   v3.0 更新：
+   - 卡牌扩充至 62 张（新增 50 张：飞行单位 / 建筑 / 状态法术等）
+   - 弓手攻击范围 115 → 95
+   - 移除过河牵引，单位不再漂移
+   - 角色语音：部署时念出台词（语音合成，可随音效一键静音）
    ============================================================ */
 
 /* ---------------- 常量与工具 ---------------- */
@@ -18,7 +16,7 @@ const W = 420, H = 740;                    // 逻辑分辨率
 const MATCH_TIME = 180;                    // 对局时长（秒）
 const ELIXIR_MAX = 10, ELIXIR_START = 5, ELIXIR_RATE = 1 / 2.8;
 const MAX_LV = 9;                          // 卡牌最高等级
-const BRIDGE_X = W / 2;                    // 桥的位置（过河时单位会向桥靠拢）
+const BRIDGE_X = W / 2;                    // 桥的位置（纯装饰）
 const F = { top: 0, bottom: 565, riverTop: 252, riverBot: 302 };   // 战场几何（每局按模式计算）
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -34,22 +32,110 @@ function shuffle(arr) {
   return a;
 }
 
-/* ---------------- 卡牌数据（基础数值，等级加成 = 1 + 0.1*(lv-1)） ---------------- */
-const CARDS = {
-  swordsman:  { id: 'swordsman',  name: '剑士',     emoji: '⚔️',  cost: 3, type: 'unit', hp: 680,  dmg: 95,  atk: 1.0, range: 22,  speed: 60, targets: 'any', r: 14 },
-  knight:     { id: 'knight',     name: '骑士',     emoji: '🛡️', cost: 4, type: 'unit', hp: 1100, dmg: 120, atk: 1.1, range: 22,  speed: 66, targets: 'any', r: 14 },
-  archer:     { id: 'archer',     name: '弓手',     emoji: '🏹',            cost: 3, type: 'unit', hp: 270,  dmg: 70,  atk: 1.0, range: 115, speed: 60, targets: 'any', r: 12 },
-  rascals:    { id: 'rascals',    name: '盗贼团伙', emoji: '🥷',            cost: 3, type: 'unit', count: 3, hp: 215, dmg: 66, atk: 1.1, range: 20, speed: 74, targets: 'any', r: 11 },
-  bomber:     { id: 'bomber',     name: '炮手',     emoji: '💣',            cost: 4, type: 'unit', hp: 350,  dmg: 140, atk: 1.9, range: 95, speed: 50, targets: 'any', r: 13, splash: 50 },
-  ogre:       { id: 'ogre',       name: '食人魔',   emoji: '👹',            cost: 5, type: 'unit', hp: 1950, dmg: 150, atk: 1.5, range: 26, speed: 38, targets: 'buildings', r: 20 },
-  giant:      { id: 'giant',      name: '巨人',     emoji: '🗿',            cost: 6, type: 'unit', hp: 2800, dmg: 110, atk: 1.7, range: 28, speed: 33, targets: 'buildings', r: 21 },
-  pyromancer: { id: 'pyromancer', name: '火法师',   emoji: '🧙',            cost: 5, type: 'unit', hp: 500,  dmg: 125, atk: 1.4, range: 105, speed: 50, targets: 'any', r: 13, splash: 58 },
-  guard:      { id: 'guard',      name: '王冠守卫', emoji: '\u{1F6E1}️', cost: 5, type: 'unit', hp: 1500, dmg: 165, atk: 1.6, range: 24, speed: 42, targets: 'any', r: 16 },
-  fireball:   { id: 'fireball',   name: '火球术',   emoji: '💥',            cost: 4, type: 'spell', dmg: 310, radius: 72, towerFactor: 0.55 },
-  arrows:     { id: 'arrows',     name: '箭雨',     emoji: '\u{1F329}️', cost: 3, type: 'spell', dmg: 105, radius: 95, towerFactor: 0.4 },
-  heal:       { id: 'heal',       name: '治疗术',   emoji: '💚',            cost: 3, type: 'spell', dmg: 180, radius: 90 },
+/* ---------------- 卡牌数据（62 张） ----------------
+   基础数值，等级加成 = 1 + 0.1*(lv-1)
+   行格式：[id, 名称, 表情, 费用, 类型, 血量, 伤害, 攻速, 射程, 移速, 目标, 半径, 扩展]
+   扩展字段：count 数量 / splash 溅射 / fly 飞行 / slow 减速 / building 建筑 / 法术参数 */
+const CARD_DEFS = [
+  // —— 原有 12 张 ——
+  ['swordsman',   '剑士',       '⚔️',  3, 'unit',     680,  95,  1.0, 22,  60,  'any', 14, null],
+  ['knight',      '骑士',       '🐴',  4, 'unit',     1100, 120, 1.1, 22,  66,  'any', 14, null],
+  ['archer',      '弓手',       '🏹',  3, 'unit',     270,  70,  1.0, 95,  60,  'any', 12, null],
+  ['rascals',     '盗贼团伙',   '🥷',  3, 'unit',     215,  66,  1.1, 20,  74,  'any', 11, { count: 3 }],
+  ['bomber',      '炮手',       '💣',  4, 'unit',     350,  140, 1.9, 95,  50,  'any', 13, { splash: 50 }],
+  ['ogre',        '食人魔',     '👹',  5, 'unit',     1950, 150, 1.5, 26,  38,  'buildings', 20, null],
+  ['giant',       '巨人',       '🗿',  6, 'unit',     2800, 110, 1.7, 28,  33,  'buildings', 21, null],
+  ['pyromancer',  '火法师',     '🧙',  5, 'unit',     500,  125, 1.4, 105, 50,  'any', 13, { splash: 58 }],
+  ['guard',       '王冠守卫',   '🛡️', 5, 'unit',     1500, 165, 1.6, 24,  42,  'any', 16, null],
+  ['fireball',    '火球术',     '💥',  4, 'spell',    0,    310, 0,   0,   0,   'any', 0,  { radius: 72, towerFactor: 0.55 }],
+  ['arrows',      '箭雨',       '🌧️', 3, 'spell',    0,    105, 0,   0,   0,   'any', 0,  { radius: 95, towerFactor: 0.4 }],
+  ['heal',        '治疗术',     '💚',  3, 'spell',    0,    180, 0,   0,   0,   'any', 0,  { radius: 90 }],
+  // —— 新增近战 / 地面单位 ——
+  ['goblin',        '哥布林',       '👺',  2, 'unit', 80,   60,  1.1, 20,  105, 'any', 10, { count: 3 }],
+  ['spearGoblin',   '掷矛哥布林',   '🎯',  2, 'unit', 90,   55,  1.3, 110, 105, 'any', 10, null],
+  ['goblinThrower', '哥布林投手',   '🧪',  3, 'unit', 160,  90,  1.5, 100, 90,  'any', 11, null],
+  ['barbarian',     '野蛮人',       '🪓',  4, 'unit', 900,  105, 1.4, 24,  60,  'any', 15, null],
+  ['eliteBarbarian','精英野蛮人',   '🦾',  6, 'unit', 1350, 160, 1.3, 24,  66,  'any', 15, null],
+  ['skeleton',      '骷髅兵',       '💀',  2, 'unit', 90,   55,  1.0, 20,  95,  'any', 9,  { count: 4 }],
+  ['skeletonKing',  '骷髅王',       '🦴',  5, 'unit', 1700, 135, 1.5, 26,  55,  'any', 18, null],
+  ['valkyrie',      '女武神',       '🌪️', 4, 'unit', 1100, 130, 1.5, 26,  60,  'any', 16, { splash: 45 }],
+  ['darkPrince',    '黑暗王子',     '🖤',  5, 'unit', 1200, 150, 1.4, 26,  60,  'any', 16, { splash: 40 }],
+  ['prince',        '王子',         '🤴',  5, 'unit', 1400, 220, 1.6, 26,  70,  'any', 15, null],
+  ['shieldMaiden',  '盾女',         '⚜️',  3, 'unit', 850,  90,  1.2, 22,  55,  'any', 14, null],
+  ['iceGolem',      '冰石人',       '⛄',  3, 'unit', 1000, 50,  2.0, 24,  45,  'any', 18, { slow: { t: 1.5, f: 0.5 } }],
+  ['miniPekka',     '迷你皮卡',     '🔪',  4, 'unit', 1100, 260, 1.7, 24,  66,  'any', 15, null],
+  ['werewolf',      '狼人',         '🐺',  5, 'unit', 1250, 170, 1.3, 24,  70,  'any', 16, null],
+  ['goblinGang',    '哥布林大军',   '🪃',  4, 'unit', 95,   60,  1.2, 22,  100, 'any', 10, { count: 5 }],
+  ['pekka',         '皮卡超人',     '🗡️', 7, 'unit', 2800, 320, 1.9, 26,  36,  'any', 21, null],
+  // —— 远程 / 飞行单位 ——
+  ['musketeer',    '火枪手',       '🔫',  5, 'unit', 420,  150, 1.5, 150, 55,  'any', 12, null],
+  ['wizard',       '法师',         '🔮',  5, 'unit', 520,  135, 1.4, 105, 50,  'any', 13, { splash: 50 }],
+  ['iceWizard',    '寒冰法师',     '🥶',  3, 'unit', 400,  75,  1.6, 100, 50,  'any', 12, { slow: { t: 1.2, f: 0.55 } }],
+  ['knightArcher', '骑射手',       '🏇',  4, 'unit', 500,  85,  1.3, 110, 80,  'any', 13, null],
+  ['babyDragon',   '飞龙宝宝',     '🐲',  5, 'unit', 800,  110, 1.5, 85,  65,  'any', 16, { fly: true, splash: 45 }],
+  ['minions',      '亡灵',         '👻',  3, 'unit', 150,  60,  1.1, 22,  88,  'any', 10, { count: 3, fly: true }],
+  ['minionHorde',  '亡灵大军',     '🌑',  5, 'unit', 150,  60,  1.1, 22,  88,  'any', 10, { count: 6, fly: true }],
+  ['bats',         '蝙蝠',         '🦇',  2, 'unit', 65,   35,  1.0, 20,  105, 'any', 8,  { count: 5, fly: true }],
+  ['lavaHound',    '熔岩猎犬',     '🐕',  8, 'unit', 3200, 65,  1.6, 24,  45,  'any', 22, { fly: true }],
+  ['phoenix',      '凤凰',         '🐦‍🔥', 4, 'unit', 700, 120,  1.4, 85,  70,  'any', 15, { fly: true }],
+  ['griffin',      '狮鹫',         '🦅',  5, 'unit', 1000, 140, 1.4, 90,  75,  'any', 17, { fly: true, splash: 40 }],
+  // —— 攻城单位 ——
+  ['hogRider',   '野猪骑士',   '🐗',  4, 'unit', 1250, 140, 1.5, 24,  95,  'buildings', 15, null],
+  ['ramRider',   '攻城锤手',   '🔨',  4, 'unit', 1100, 120, 1.4, 24,  90,  'buildings', 15, null],
+  ['royalGiant', '皇家巨人',   '🏰',  7, 'unit', 3200, 180, 1.8, 95,  30,  'buildings', 22, null],
+  ['golem',      '石头人',     '🪨',  8, 'unit', 3800, 150, 2.0, 28,  26,  'buildings', 23, null],
+  ['goblinGiant','哥布林巨人', '🎒',  6, 'unit', 2600, 110, 1.6, 26,  36,  'buildings', 21, null],
+  ['balloon',    '气球兵',     '🎈',  5, 'unit', 900,  420, 2.2, 24,  55,  'buildings', 19, { fly: true, splash: 70 }],
+  // —— 建筑 ——
+  ['cannon',      '加农炮',       '🧨',  4, 'building', 1100, 85,  0.9,  150, 0, 'any', 18, { building: { kind: 'shooter' } }],
+  ['mortar',      '迫击炮',       '🎇',  5, 'building', 950,  170, 1.6,  220, 0, 'any', 18, { building: { kind: 'shooter' }, splash: 55 }],
+  ['tesla',       '特斯拉电磁塔', '⚡',  4, 'building', 900,  75,  0.75, 140, 0, 'any', 16, { building: { kind: 'shooter' } }],
+  ['xBow',        '弩炮',         '☄️', 6, 'building', 1300, 55,  0.35, 260, 0, 'any', 20, { building: { kind: 'shooter' } }],
+  ['goblinHut',   '哥布林小屋',   '🛖',  5, 'building', 1200, 0,   0,    0,   0, 'any', 20, { building: { kind: 'spawner', interval: 4, max: 3, spawn: 'goblin' } }],
+  ['tombstone',   '骷髅墓碑',     '🪦',  3, 'building', 700,  0,   0,    0,   0, 'any', 16, { building: { kind: 'spawner', interval: 4.5, max: 3, spawn: 'skeleton' } }],
+  ['elixirPump',  '圣水泵',       '🫗',  6, 'building', 1000, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 } }],
+  // —— 法术 ——
+  ['freeze',       '冰冻术',   '🧊',  4, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 95, freeze: 2.2 }],
+  ['poison',       '毒药',     '☠️', 4, 'spell', 0, 42,  0, 0, 0, 'any', 0, { radius: 95, zone: 'poison', duration: 6 }],
+  ['rage',         '狂暴术',   '🔥',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 110, zone: 'rage', duration: 5, boost: 1.4 }],
+  ['log',          '滚木',     '🪵',  2, 'spell', 0, 180, 0, 0, 0, 'any', 0, { radius: 85, logRange: 170, width: 55 }],
+  ['lightning',    '雷电术',   '🌩️', 5, 'spell', 0, 260, 0, 0, 0, 'any', 0, { radius: 130, strikes: 3, towerFactor: 0.35 }],
+  ['rocket',       '火箭',     '🚀',  6, 'spell', 0, 700, 0, 0, 0, 'any', 0, { radius: 45, towerFactor: 0.4 }],
+  ['earthquake',   '地震',     '🌋',  4, 'spell', 0, 250, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 2.2, buildingFactor: 1.5, unitFactor: 0.35 }],
+  ['snowBall',     '雪球',     '❄️', 2, 'spell', 0, 90,  0, 0, 0, 'any', 0, { radius: 60, slow: { t: 1.0, f: 0.55 } }],
+  ['meteorShower', '流星火雨', '💫',  7, 'spell', 0, 380, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 0.5 }],
+  ['mirror',       '镜像术',   '🪞',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 60 }],
+];
+const CARDS = {};
+const DECK = [];
+for (const d of CARD_DEFS) {
+  const [id, name, emoji, cost, type, hp, dmg, atk, range, speed, targets, r, ext] = d;
+  CARDS[id] = { id, name, emoji, cost, type, hp, dmg, atk, range, speed, targets, r, ...(ext || {}) };
+  DECK.push(id);
+}
+
+/* 角色台词（部署语音，不同角色不同音调语速） */
+const VOICE = {
+  swordsman: '为了王冠，冲啊！', knight: '骑士的荣耀，由我守护！', archer: '放箭！',
+  rascals: '嘿嘿，一起上！', bomber: '炸弹来了，快躲开！', ogre: '食人魔来了！',
+  giant: '巨人，前进！', pyromancer: '火焰净化一切！', guard: '王冠由我守护！',
+  fireball: '火球降临！', arrows: '万箭齐发！', heal: '治愈之光！',
+  goblin: '哥布林出击！', spearGoblin: '接矛！', goblinThrower: '吃我一瓶！',
+  barbarian: '野蛮冲锋！', eliteBarbarian: '精英之力！', skeleton: '咔咔咔……',
+  skeletonKing: '亡灵大军听令！', valkyrie: '旋风斩！', darkPrince: '黑暗降临！',
+  prince: '王子冲锋！', shieldMaiden: '坚守阵地！', iceGolem: '冰冰凉。',
+  miniPekka: '皮卡！', werewolf: '嗷呜——', goblinGang: '兄弟们上！', pekka: '皮卡！皮卡！',
+  musketeer: '砰！', wizard: '魔法闪耀！', iceWizard: '冷静一下。', knightArcher: '箭在弦上！',
+  babyDragon: '吼～', minions: '嘶嘶！', minionHorde: '大军压境！', bats: '吱吱吱！',
+  lavaHound: '熔岩咆哮！', phoenix: '凤凰涅槃！', griffin: '狮鹫之翼！',
+  hogRider: '野猪快跑！', ramRider: '攻城！', royalGiant: '皇家重炮！',
+  golem: '轰隆——', goblinGiant: '大家伙来了！', balloon: '炸弹送达！',
+  cannon: '轰！', mortar: '迫击炮就位！', tesla: '电流滋滋！', xBow: '弩炮连射！',
+  goblinHut: '小屋建好了！', tombstone: '墓碑立起……', elixirPump: '圣水涓涓。',
+  freeze: '冻结吧！', poison: '毒液蔓延……', rage: '狂暴起来！', log: '滚木来啦！',
+  lightning: '天雷滚滚！', rocket: '火箭发射！', earthquake: '地动山摇！',
+  snowBall: '雪球砸头！', meteorShower: '流星火雨！', mirror: '镜像复制！',
 };
-const DECK = ['swordsman', 'knight', 'archer', 'rascals', 'bomber', 'ogre', 'giant', 'pyromancer', 'guard', 'fireball', 'arrows', 'heal'];
 
 /* ---------------- 竞技场（按奖杯解锁，不同配色） ---------------- */
 const ARENAS = [
@@ -180,6 +266,24 @@ const AudioSys = {
   toggle() { this.muted = !this.muted; if (this.master) this.master.gain.value = this.muted ? 0 : 0.16; return this.muted; },
 };
 
+/* 角色语音（语音合成念台词，静音时关闭） */
+function sayVoice(id) {
+  const line = VOICE[id];
+  if (!line || AudioSys.muted) return;
+  try {
+    if (typeof speechSynthesis === 'undefined' || typeof SpeechSynthesisUtterance === 'undefined') return;
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffff;
+    if (speechSynthesis.speaking) speechSynthesis.cancel();   // 只保留最新一句，避免嘈杂
+    const u = new SpeechSynthesisUtterance(line);
+    u.lang = 'zh-CN';
+    u.pitch = 0.7 + (h % 6) * 0.12;    // 每个角色不同音调
+    u.rate = 0.95 + (h % 4) * 0.08;    // 不同语速
+    u.volume = 0.9;
+    speechSynthesis.speak(u);
+  } catch (e) { /* 语音不可用时静默 */ }
+}
+
 /* ---------------- 全局状态 ---------------- */
 let uid = 1;
 let state = { screen: 'menu', difficulty: 0 };
@@ -187,6 +291,8 @@ const ui = { menu: [], deck: [], over: [], hand: [], hand2: [] };   // 命中区
 const drags = new Map();    // pointerId -> { id, team, x, y, sx, sy, moved }
 let select = null;          // 点选待部署的卡 { id, team }
 let clock = 0;              // 全局动画时钟
+let deckScroll = 0;         // 牌库滚动
+let deckDrag = null;        // 牌库拖拽滚动状态 { y, s }
 
 /* ---------------- 实体 ---------------- */
 function makeTower(team, kind, x, y) {
@@ -205,10 +311,23 @@ function spawnUnit(card, team, x, y, lv) {
     hp: Math.round(card.hp * m), maxHp: Math.round(card.hp * m),
     dmg: Math.round(card.dmg * m), r: card.r, speed: card.speed,
     cooldown: 0, lunge: 0, target: null, dead: false,
+    freeze: 0, slowT: 0, slowF: 1,
   };
 }
-function makeProj(tw, target) {
-  return { x: tw.x, y: tw.y - tw.r * 0.2, tx: target, team: tw.team, dmg: tw.dmg, speed: 380, dead: false };
+function makeBuilding(card, team, x, y, lv) {
+  const m = mult(lv);
+  const b = card.building;
+  return {
+    isBuilding: true, id: uid++, card, team, x, y, r: card.r, lv,
+    hp: Math.round(card.hp * m), maxHp: Math.round(card.hp * m),
+    dmg: Math.round(card.dmg * m), range: card.range, atk: card.atk,
+    splash: card.splash || 0, kind: b.kind,
+    cooldown: 0, timer: b.interval || 0, spawn: b.spawn, max: b.max || 0,
+    dead: false,
+  };
+}
+function makeProj(src, target) {
+  return { x: src.x, y: src.y - src.r * 0.2, tx: target, team: src.team, dmg: src.dmg, speed: 380, splash: src.splash || 0, dead: false };
 }
 
 /* ---------------- 对局初始化 ---------------- */
@@ -237,6 +356,7 @@ function newGame(mode, difficulty) {
     time: MATCH_TIME, elapsed: 0, doubleSaid: false,
     elixir: [ELIXIR_START, ELIXIR_START],
     units: [], projs: [], parts: [], texts: [],
+    buildings: [], zones: [], lastUnit: [null, null],
     towers: [
       makeTower(1, 'king', 210, F.top + 42), makeTower(1, 'guard', 105, F.top + 92), makeTower(1, 'guard', 315, F.top + 92),
       makeTower(0, 'guard', 105, F.bottom - 92), makeTower(0, 'guard', 315, F.bottom - 92), makeTower(0, 'king', 210, F.bottom - 42),
@@ -301,6 +421,16 @@ function damageTower(tw, dmg) {
     if (tw.kind === 'king') endGame(winner, '国王塔被摧毁');
   }
 }
+function damageBuilding(b, dmg) {
+  if (b.dead) return;
+  b.hp -= dmg;
+  addText(b.x, b.y - b.r - 12, String(Math.round(dmg)), '#ffd94d', 12);
+  if (b.hp <= 0) {
+    b.dead = true;
+    spawnBoom(b.x, b.y);
+    addText(b.x, b.y - 26, b.card.name + '被摧毁!', '#ff6b5e', 15);
+  }
+}
 function endGame(winner, reason) {
   if (state.screen !== 'playing') return;
   state.screen = 'over'; state.over = true;
@@ -332,30 +462,40 @@ function endGame(winner, reason) {
 
 /* ---------------- 单位 ---------------- */
 function findTarget(u) {
-  const towers = state.towers;
-  // 只攻击建筑的单位：找最近的敌方塔
+  const towers = state.towers, buildings = state.buildings;
+  // 只攻击建筑的单位：找最近的敌方塔或建筑
   if (u.card.targets === 'buildings') {
     let best = null, bd = Infinity;
     for (const t of towers) if (!t.dead && t.team !== u.team) {
       const d = dist2(u.x, u.y, t.x, t.y);
       if (d < bd) { bd = d; best = t; }
     }
+    for (const b of buildings) if (!b.dead && b.team !== u.team) {
+      const d = dist2(u.x, u.y, b.x, b.y);
+      if (d < bd) { bd = d; best = b; }
+    }
     return best;
   }
   // 普通单位：优先攻击附近（横向 140 内）的敌方单位
+  // 地面近战单位（射程 ≤ 30 且不会飞）打不到飞行单位
   let best = null, bd = 190;
   for (const e of state.units) {
     if (e.dead || e.team === u.team) continue;
+    if (e.card.fly && !u.card.fly && u.card.range <= 30) continue;
     if (Math.abs(e.x - u.x) > 140) continue;
     const d = dist2(u.x, u.y, e.x, e.y);
     if (d < bd) { bd = d; best = e; }
   }
   if (best) return best;
-  // 否则向最近的敌方塔推进
+  // 否则向最近的敌方塔/建筑推进
   bd = Infinity;
   for (const t of towers) if (!t.dead && t.team !== u.team) {
     const d = dist2(u.x, u.y, t.x, t.y);
     if (d < bd) { bd = d; best = t; }
+  }
+  for (const b of buildings) if (!b.dead && b.team !== u.team) {
+    const d = dist2(u.x, u.y, b.x, b.y);
+    if (d < bd) { bd = d; best = b; }
   }
   return best;
 }
@@ -365,29 +505,39 @@ function doAttack(u, t) {
     AudioSys.hit();
     for (const e of state.units) if (!e.dead && e.team !== u.team && dist2(e.x, e.y, t.x, t.y) < u.card.splash + e.r) damageUnit(e, u.dmg);
     for (const tw of state.towers) if (!tw.dead && tw.team !== u.team && dist2(tw.x, tw.y, t.x, t.y) < u.card.splash + tw.r) damageTower(tw, u.dmg);
+    for (const b of state.buildings) if (!b.dead && b.team !== u.team && dist2(b.x, b.y, t.x, t.y) < u.card.splash + b.r) damageBuilding(b, u.dmg);
   } else {
     spawnHit(t.x, t.y);
     AudioSys.hit();
     if (t.isTower) damageTower(t, u.dmg);
+    else if (t.isBuilding) damageBuilding(t, u.dmg);
     else damageUnit(t, u.dmg);
   }
+  // 攻击附带减速（寒冰法师 / 冰石人 / 雪球）
+  if (u.card.slow && t.isUnit) { t.slowT = u.card.slow.t; t.slowF = u.card.slow.f; }
 }
 function updateUnits(dt) {
   const units = state.units;
   for (let i = units.length - 1; i >= 0; i--) {
     const u = units[i];
     if (u.dead) { units.splice(i, 1); continue; }
+    // 冰冻：完全停住
+    if (u.freeze > 0) { u.freeze -= dt; continue; }
     u.cooldown -= dt;
     u.lunge = Math.max(0, u.lunge - dt * 3.2);
+    u.slowT = Math.max(0, u.slowT - dt);
     if (!u.target || u.target.dead) u.target = findTarget(u);
     const t = u.target;
+    // 狂暴区域内加速
+    const rz = state.zones.find(z => z.kind === 'rage' && z.team === u.team && dist2(u.x, u.y, z.x, z.y) < z.r);
+    const spd = u.speed * (u.slowT > 0 ? u.slowF : 1) * (rz ? rz.boost : 1);
     if (!t) {
-      u.y += u.speed * dt * (u.team === 0 ? -1 : 1);
+      u.y += spd * dt * (u.team === 0 ? -1 : 1);
     } else {
       const rr = u.r + (t.r || 0) + (u.card.range || 0);
       const d = dist2(u.x, u.y, t.x, t.y);
       if (d > rr) {
-        const sp = u.speed * dt;
+        const sp = spd * dt;
         u.x += (t.x - u.x) / d * sp;
         u.y += (t.y - u.y) / d * sp;
       } else if (u.cooldown <= 0) {
@@ -396,8 +546,6 @@ function updateUnits(dt) {
         doAttack(u, t);
       }
     }
-    // 过河时向桥靠拢（纯视觉引导）
-    if (u.y > F.riverTop - 12 && u.y < F.riverBot + 12) u.x += (BRIDGE_X - u.x) * Math.min(1, dt * 2.2);
     u.x = clamp(u.x, 16, W - 16);
     u.y = clamp(u.y, F.top + 14, F.bottom - 14);
   }
@@ -438,7 +586,15 @@ function updateProjs(dt) {
     const step = p.speed * dt;
     if (d <= step + (t.r || 0)) {
       if (t.isTower) damageTower(t, p.dmg);
+      else if (t.isBuilding) damageBuilding(t, p.dmg);
       else damageUnit(t, p.dmg);
+      // 溅射（迫击炮）
+      if (p.splash > 0) {
+        for (const e of state.units) {
+          if (e.dead || e.team === p.team || e === t) continue;
+          if (dist2(e.x, e.y, t.x, t.y) < p.splash + e.r) damageUnit(e, p.dmg);
+        }
+      }
       p.dead = true;
     } else {
       p.x += (t.x - p.x) / d * step;
@@ -447,10 +603,68 @@ function updateProjs(dt) {
   }
 }
 
+/* ---------------- 建筑 ---------------- */
+function updateBuildings(dt) {
+  for (const b of state.buildings) {
+    if (b.dead) continue;
+    if (b.kind === 'shooter') {
+      b.cooldown -= dt;
+      if (b.cooldown > 0) continue;
+      let best = null, bd = b.range;
+      for (const u of state.units) {
+        if (u.dead || u.team === b.team) continue;
+        const d = dist2(u.x, u.y, b.x, b.y);
+        if (d < bd) { bd = d; best = u; }
+      }
+      if (best) { b.cooldown = b.atk; state.projs.push(makeProj(b, best)); AudioSys.arrow(); }
+    } else {
+      b.timer -= dt;
+      if (b.timer <= 0) {
+        if (b.kind === 'pump') {
+          b.timer = b.card.building.interval;
+          state.elixir[b.team] = Math.min(ELIXIR_MAX, state.elixir[b.team] + 1);
+          addText(b.x, b.y - b.r - 12, '+1 💧', '#c26af0', 14);
+        } else {
+          b.timer = b.card.building.interval;
+          const alive = state.units.filter(u => !u.dead && u.team === b.team && u.card.id === b.spawn && dist2(u.x, u.y, b.x, b.y) < 160).length;
+          if (alive < b.max) {
+            const sx = b.x + rand(-30, 30);
+            state.units.push(spawnUnit(CARDS[b.spawn], b.team, sx, b.y, b.lv));
+          }
+        }
+      }
+    }
+  }
+  // 清理死亡建筑
+  for (let i = state.buildings.length - 1; i >= 0; i--) {
+    if (state.buildings[i].dead) state.buildings.splice(i, 1);
+  }
+}
+
+/* ---------------- 区域法术 ---------------- */
+function updateZones(dt) {
+  for (let i = state.zones.length - 1; i >= 0; i--) {
+    const z = state.zones[i];
+    z.life -= dt;
+    if (z.life <= 0) { state.zones.splice(i, 1); continue; }
+    if (z.kind === 'poison') {
+      z.tick -= dt;
+      if (z.tick <= 0) {
+        z.tick = 0.5;
+        for (const u of state.units) {
+          if (!u.dead && u.team !== z.team && dist2(u.x, u.y, z.x, z.y) < z.r + u.r) damageUnit(u, z.dps);
+        }
+      }
+    }
+  }
+}
+
 /* ---------------- 法术 ---------------- */
 function castSpell(card, x, y, team, lv) {
-  const dmg = Math.round(card.dmg * mult(lv));
-  if (card.id === 'heal') {
+  const m = mult(lv);
+  const dmg = Math.round(card.dmg * m);
+  const id = card.id;
+  if (id === 'heal') {
     AudioSys.upgrade();
     for (let i = 0; i < 14; i++) state.parts.push({ x: x + rand(-card.radius, card.radius), y: y + rand(-card.radius, card.radius), vx: rand(-12, 12), vy: rand(-60, -20), g: 0, life: rand(0.4, 0.8), r: rand(2, 4), col: pick(['#6ee98a', '#9dffb0', '#d8ffe0']) });
     for (const u of state.units) {
@@ -462,18 +676,100 @@ function castSpell(card, x, y, team, lv) {
     }
     return;
   }
-  if (card.id === 'fireball') {
+  if (id === 'freeze') {
+    AudioSys.tone(900, 300, 0.3, 'sine', 0.5);
+    for (let i = 0; i < 18; i++) state.parts.push({ x: x + rand(-card.radius, card.radius), y: y + rand(-card.radius, card.radius), vx: 0, vy: 0, g: 0, life: rand(0.4, 0.8), r: rand(2, 4), col: pick(['#bfe8ff', '#7fd4ff', '#ffffff']) });
+    for (const u of state.units) {
+      if (u.dead || u.team === team) continue;
+      if (dist2(u.x, u.y, x, y) < card.radius + u.r) u.freeze = card.freeze;
+    }
+    return;
+  }
+  if (id === 'poison' || id === 'rage') {
+    AudioSys.tone(id === 'poison' ? 200 : 400, id === 'poison' ? 90 : 700, 0.4, 'sawtooth', 0.4);
+    state.zones.push({
+      kind: id, team, x, y, r: card.radius,
+      life: card.duration, total: card.duration,
+      dps: id === 'poison' ? Math.round(card.dmg * m) : 0,
+      boost: card.boost || 1, tick: 0,
+    });
+    return;
+  }
+  if (id === 'log') {
     AudioSys.boom();
-    state.shake = Math.max(state.shake, 9);
-    for (let i = 0; i < 26; i++) state.parts.push({ x, y, vx: rand(-170, 170), vy: rand(-190, 90), g: 300, life: rand(0.4, 0.85), r: rand(3, 7), col: pick(['#ffdd55', '#ff9933', '#ff5533', '#ffe9a8']) });
-    for (const u of state.units) if (!u.dead && u.team !== team && dist2(u.x, u.y, x, y) < card.radius + u.r) damageUnit(u, dmg);
+    for (let i = 0; i < 20; i++) state.parts.push({ x: x + rand(-card.logRange, card.logRange), y: y + rand(-card.width, card.width), vx: 0, vy: rand(-40, 40), g: 0, life: 0.4, r: rand(2, 4), col: '#a9743f' });
+    for (const u of state.units) {
+      if (u.dead || u.team === team) continue;
+      if (Math.abs(u.x - x) <= card.logRange && Math.abs(u.y - y) <= card.width) damageUnit(u, dmg);
+    }
+    for (const b of state.buildings) {
+      if (b.dead || b.team === team) continue;
+      if (Math.abs(b.x - x) <= card.logRange && Math.abs(b.y - y) <= card.width) damageBuilding(b, dmg);
+    }
+    return;
+  }
+  if (id === 'lightning') {
+    AudioSys.noise(0.3, 0.8, 600);
+    AudioSys.tone(1200, 200, 0.25, 'sawtooth', 0.5);
+    const targets = [];
+    for (const u of state.units) if (!u.dead && u.team !== team && dist2(u.x, u.y, x, y) < card.radius + u.r) targets.push(u);
+    for (const b of state.buildings) if (!b.dead && b.team !== team && dist2(b.x, b.y, x, y) < card.radius + b.r) targets.push(b);
+    for (const tw of state.towers) if (!tw.dead && tw.team !== team && dist2(tw.x, tw.y, x, y) < card.radius + tw.r) targets.push(tw);
+    targets.sort((a, b) => b.hp - a.hp);
+    for (let i = 0; i < Math.min(card.strikes, targets.length); i++) {
+      const t = targets[i];
+      for (let k = 0; k < 8; k++) state.parts.push({ x: t.x + rand(-14, 14), y: t.y + rand(-20, 20), vx: rand(-60, 60), vy: rand(-120, -40), g: 0, life: 0.3, r: rand(2, 4), col: pick(['#fff9a8', '#ffe94d', '#ffffff']) });
+      if (t.isTower) damageTower(t, Math.round(dmg * card.towerFactor));
+      else if (t.isBuilding) damageBuilding(t, dmg);
+      else damageUnit(t, dmg);
+    }
+    return;
+  }
+  if (id === 'earthquake') {
+    AudioSys.towerDown();
+    state.shake = Math.max(state.shake, 12);
+    for (let i = 0; i < 24; i++) state.parts.push({ x: x + rand(-card.radius, card.radius), y: y + rand(-card.radius, card.radius), vx: rand(-50, 50), vy: rand(-160, -60), g: 300, life: rand(0.4, 0.8), r: rand(2, 5), col: pick(['#8a7352', '#a98951', '#6b5a3e']) });
+    for (const u of state.units) if (!u.dead && u.team !== team && dist2(u.x, u.y, x, y) < card.radius + u.r) damageUnit(u, Math.round(dmg * card.unitFactor));
+    for (const b of state.buildings) if (!b.dead && b.team !== team && dist2(b.x, b.y, x, y) < card.radius + b.r) damageBuilding(b, Math.round(dmg * card.buildingFactor));
     for (const tw of state.towers) if (!tw.dead && tw.team !== team && dist2(tw.x, tw.y, x, y) < card.radius + tw.r) damageTower(tw, Math.round(dmg * card.towerFactor));
-  } else {
+    return;
+  }
+  if (id === 'snowBall') {
+    AudioSys.tone(700, 300, 0.2, 'sine', 0.5);
+    for (let i = 0; i < 10; i++) state.parts.push({ x: x + rand(-card.radius, card.radius), y: y + rand(-card.radius, card.radius), vx: rand(-30, 30), vy: rand(-40, 40), g: 0, life: 0.4, r: rand(2, 4), col: '#dff2ff' });
+    for (const u of state.units) {
+      if (u.dead || u.team === team) continue;
+      if (dist2(u.x, u.y, x, y) < card.radius + u.r) {
+        damageUnit(u, dmg);
+        u.slowT = card.slow.t; u.slowF = card.slow.f;
+      }
+    }
+    return;
+  }
+  if (id === 'mirror') {
+    AudioSys.deploy();
+    const last = state.lastUnit[team];
+    if (last) {
+      const copy = spawnUnit(last.card, team, x, y, last.lv);
+      state.units.push(copy);
+      spawnRing(x, y, team);
+      addText(x, y - 30, '镜像复制!', '#9dffb0', 15);
+    }
+    return;
+  }
+  // 爆炸类：fireball / rocket / meteorShower
+  const big = id === 'meteorShower', small = id === 'rocket';
+  AudioSys.boom();
+  state.shake = Math.max(state.shake, big ? 13 : small ? 8 : 9);
+  const n = big ? 34 : small ? 18 : 26;
+  for (let i = 0; i < n; i++) state.parts.push({ x, y, vx: rand(-170, 170), vy: rand(-190, 90), g: 300, life: rand(0.4, 0.85), r: rand(3, 7), col: pick(['#ffdd55', '#ff9933', '#ff5533', '#ffe9a8']) });
+  if (id === 'arrows') {
     AudioSys.arrowRain();
     for (let w = 0; w < 3; w++) for (let i = 0; i < 9; i++) state.parts.push({ x: x + rand(-card.radius, card.radius), y: y - rand(0, card.radius), vx: rand(-24, 24), vy: rand(260, 400), g: 520, life: 0.5, r: 2, col: '#cfe6ff', streak: true });
-    for (const u of state.units) if (!u.dead && u.team !== team && dist2(u.x, u.y, x, y) < card.radius + u.r) damageUnit(u, dmg);
-    for (const tw of state.towers) if (!tw.dead && tw.team !== team && dist2(tw.x, tw.y, x, y) < card.radius + tw.r) damageTower(tw, Math.round(dmg * card.towerFactor));
   }
+  for (const u of state.units) if (!u.dead && u.team !== team && dist2(u.x, u.y, x, y) < card.radius + u.r) damageUnit(u, dmg);
+  for (const b of state.buildings) if (!b.dead && b.team !== team && dist2(b.x, b.y, x, y) < card.radius + b.r) damageBuilding(b, dmg);
+  for (const tw of state.towers) if (!tw.dead && tw.team !== team && dist2(tw.x, tw.y, x, y) < card.radius + tw.r) damageTower(tw, Math.round(dmg * card.towerFactor));
 }
 
 /* ---------------- 出牌 ---------------- */
@@ -495,14 +791,20 @@ function playCard(id, x, y, team) {
   state.hand[team].push(drawN(state.queue[team], 1)[0]);
   if (card.type === 'spell') {
     castSpell(card, x, y, team, lv);
+  } else if (card.type === 'building') {
+    state.buildings.push(makeBuilding(card, team, x, y, lv));
+    spawnRing(x, y, team);
   } else {
     const n = card.count || 1;
     for (let k = 0; k < n; k++) {
       state.units.push(spawnUnit(card, team, x + (k - (n - 1) / 2) * 30, y + (k - (n - 1) / 2) * 12, lv));
     }
+    state.lastUnit[team] = { card, lv };
     spawnRing(x, y, team);
   }
   AudioSys.deploy();
+  // 角色语音：AI 不说话，只有玩家自己的卡牌念台词
+  if (state.mode !== 'ai' || team === 0) sayVoice(id);
 }
 
 /* ---------------- 主更新 ---------------- */
@@ -519,6 +821,8 @@ function update(dt) {
   state.elixir[1] = clamp(state.elixir[1] + ELIXIR_RATE * m2 * dt, 0, ELIXIR_MAX);
   updateTowers(dt);
   updateUnits(dt);
+  updateBuildings(dt);
+  updateZones(dt);
   updateProjs(dt);
   updateFx(dt);
   if (state.mode === 'ai') aiUpdate(dt);
@@ -526,6 +830,10 @@ function update(dt) {
 }
 
 /* ---------------- AI ---------------- */
+const AI_PUSH_TANKS = ['royalGiant', 'golem', 'goblinGiant', 'giant', 'ogre', 'hogRider', 'ramRider', 'balloon', 'lavaHound', 'pekka'];
+const AI_DEF_UNITS = ['knight', 'swordsman', 'rascals', 'barbarian', 'valkyrie', 'goblinGang', 'iceWizard', 'wizard', 'pyromancer', 'musketeer', 'bomber', 'shieldMaiden', 'iceGolem', 'miniPekka', 'prince', 'darkPrince', 'skeletonKing'];
+const AI_SPELLS_CLUSTER = ['meteorShower', 'fireball', 'arrows', 'snowBall', 'log', 'freeze', 'poison'];
+const AI_SPELLS_FINISH = ['fireball', 'rocket', 'meteorShower', 'lightning'];
 function aiUpdate(dt) {
   const ai = state.ai;
   ai.t -= dt;
@@ -544,25 +852,30 @@ function aiUpdate(dt) {
     return { x: clamp(cx / us.length, 40, W - 40), y: clamp(cy / us.length, F.top + 40, F.top + 230) };
   };
 
-  // 1) 火球清场：我方半场聚集了多个敌方单位
-  if (!easy && can.includes('fireball') && crossed.length >= 2) {
-    const c = centroid(crossed);
-    if (crossed.filter(u => dist2(u.x, u.y, c.x, c.y) < 70).length >= 2) {
-      playCard('fireball', c.x, c.y, 1);
+  // 1) 法术清场：己方半场聚集了敌方单位
+  if (crossed.length >= (easy ? 3 : 2)) {
+    const spell = AI_SPELLS_CLUSTER.find(s => can.includes(s));
+    if (spell) {
+      const c = centroid(crossed);
+      playCard(spell, c.x, c.y, 1);
       return;
     }
   }
-  // 2) 箭雨压制人海
-  if (!easy && can.includes('arrows') && crossed.length >= 3) {
-    const c = centroid(crossed);
-    playCard('arrows', c.x, c.y, 1);
-    return;
+  // 2) 法术终结残血塔
+  const weak = state.towers.filter(t => !t.dead && t.team === 0 && t.hp < (easy ? 300 : 450));
+  if (weak.length) {
+    const spell = AI_SPELLS_FINISH.find(s => can.includes(s));
+    if (spell) {
+      const t = weak[0];
+      playCard(spell, t.x, t.y, 1);
+      return;
+    }
   }
-  // 3) 法术终结残血塔
-  const weak = state.towers.filter(t => !t.dead && t.team === 0 && t.hp < (easy ? 260 : 420));
-  if (weak.length && can.includes('fireball')) {
-    const t = weak[0];
-    playCard('fireball', t.x, t.y, 1);
+  // 3) 拍出兵营建筑（上限 2 座）
+  const spawnerCard = hand.find(id => CARDS[id].type === 'building' && CARDS[id].building && CARDS[id].building.kind === 'spawner');
+  if (spawnerCard && state.buildings.filter(b => b.team === 1).length < 2 && el >= 6.5) {
+    const lane = Math.random() < 0.5 ? 105 : 315;
+    playCard(spawnerCard, lane, F.top + 215, 1);
     return;
   }
   // 4) 治疗：己方多单位受伤时奶一口
@@ -580,9 +893,9 @@ function aiUpdate(dt) {
     if (threat >= (easy ? 4 : 3)) {
       const c = centroid(crossed);
       const lane = c.x < 210 ? 105 : 315;
-      const opts = ['knight', 'swordsman', 'rascals', 'bomber', 'archer', 'pyromancer', 'guard'].filter(id => can.includes(id));
-      if (opts.length) {
-        playCard(pick(opts), lane + rand(-28, 28), rand(F.top + 128, F.top + 170), 1);
+      const def = AI_DEF_UNITS.find(id => can.includes(id));
+      if (def) {
+        playCard(def, lane + rand(-28, 28), rand(F.top + 128, F.top + 170), 1);
         return;
       }
     }
@@ -590,9 +903,10 @@ function aiUpdate(dt) {
   // 6) 进攻：攒够圣水组织推进
   if (el >= (easy ? 5.5 : 4.5)) {
     const lane = Math.random() < 0.5 ? 105 : 315;
-    const opts = ['giant', 'ogre', 'guard', 'pyromancer', 'bomber', 'knight', 'archer', 'swordsman', 'rascals'].filter(id => can.includes(id));
-    if (opts.length) {
-      playCard(pick(opts), lane + rand(-25, 25), rand(F.top + 85, F.top + 145), 1);
+    const tank = AI_PUSH_TANKS.find(id => can.includes(id));
+    const id = tank || AI_DEF_UNITS.find(c => can.includes(c));
+    if (id) {
+      playCard(id, lane + rand(-25, 25), rand(F.top + 85, F.top + 145), 1);
       return;
     }
   }
@@ -629,7 +943,7 @@ function drawArena() {
     }
     ctx.stroke();
   }
-  // 桥
+  // 桥（纯装饰，不影响单位路径）
   const bw = 110, bx = BRIDGE_X - bw / 2, by = F.riverTop - 6, bh = F.riverBot - F.riverTop + 12;
   ctx.fillStyle = '#a9743f'; ctx.fillRect(bx, by, bw, bh);
   ctx.fillStyle = '#8a5c30';
@@ -641,6 +955,18 @@ function drawArena() {
   ctx.strokeRect(3, F.top + 3, W - 6, F.bottom - F.top - 6);
   ctx.strokeStyle = '#cbb48f'; ctx.lineWidth = 2;
   ctx.strokeRect(6, F.top + 6, W - 12, F.bottom - F.top - 12);
+}
+function drawZones() {
+  for (const z of state.zones) {
+    const a = clamp(z.life / z.total, 0, 1);
+    ctx.beginPath();
+    ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2);
+    ctx.fillStyle = z.kind === 'poison' ? 'rgba(150,70,200,' + 0.22 * a + ')' : 'rgba(255,80,190,' + 0.18 * a + ')';
+    ctx.fill();
+    ctx.strokeStyle = z.kind === 'poison' ? 'rgba(190,120,240,' + 0.6 * a + ')' : 'rgba(255,140,220,' + 0.6 * a + ')';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
 }
 function hpBar(x, y, w, ratio, team, h = 5) {
   const f = clamp(ratio, 0, 1);
@@ -661,21 +987,17 @@ function drawTower(tw) {
   }
   const stone = '#cbb48f', dark = '#8a7352';
   const col = tw.team === 0 ? '#3d6fe0' : '#d84a42';
-  // 影子
   ctx.fillStyle = 'rgba(0,0,0,0.28)';
   ctx.beginPath(); ctx.ellipse(tw.x, tw.y + tw.r * 0.62, tw.r + 7, tw.r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
-  // 主体
   rr(tw.x - tw.r, tw.y - tw.r * 0.45, tw.r * 2, tw.r * 1.75, 6);
   ctx.fillStyle = stone; ctx.fill();
   ctx.strokeStyle = dark; ctx.lineWidth = 2; ctx.stroke();
-  // 城垛
   const cw = tw.r * 0.62, ch = tw.r * 0.5;
   for (let i = -1; i <= 1; i++) {
     rr(tw.x + i * tw.r * 0.62 - cw / 2, tw.y - tw.r * 0.45 - ch, cw, ch, 3);
     ctx.fillStyle = stone; ctx.fill();
     ctx.strokeStyle = dark; ctx.stroke();
   }
-  // 旗帜
   ctx.strokeStyle = dark; ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(tw.x, tw.y - tw.r * 0.45 - ch);
@@ -687,13 +1009,11 @@ function drawTower(tw) {
   ctx.lineTo(tw.x + 11, tw.y - tw.r * 0.45 - ch - 9);
   ctx.lineTo(tw.x, tw.y - tw.r * 0.45 - ch - 6);
   ctx.closePath(); ctx.fill();
-  // 国王塔皇冠
   if (tw.kind === 'king') {
     ctx.font = '16px "Segoe UI Emoji",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('👑', tw.x, Math.max(F.top + 22, tw.y - tw.r - 24));
   }
-  // 血条（阵营色）
   hpBar(tw.x, tw.y - tw.r - 10, tw.r * 2, tw.hp / tw.maxHp, tw.team);
 }
 function drawUnit(u) {
@@ -711,8 +1031,24 @@ function drawUnit(u) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(u.card.emoji, 0, 2);
   ctx.restore();
-  // 血条（阵营色）
+  // 冰冻标记
+  if (u.freeze > 0) {
+    ctx.font = Math.round(u.r * 1.2) + 'px "Segoe UI Emoji",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('🧊', u.x + u.r * 0.8, u.y - u.r * 0.9);
+  }
   hpBar(u.x, u.y - u.r - 12, u.r * 2.2, u.hp / u.maxHp, u.team, 4);
+}
+function drawBuilding(b) {
+  ctx.strokeStyle = b.team === 0 ? 'rgba(90,160,255,0.45)' : 'rgba(255,90,80,0.45)';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(b.x, b.y + b.r * 0.8, b.r * 0.95, b.r * 0.4, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(b.x, b.y + b.r * 0.8, b.r * 0.9, b.r * 0.38, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.font = Math.round(b.r * 2.2) + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(b.card.emoji, b.x, b.y);
+  hpBar(b.x, b.y - b.r - 10, b.r * 2, b.hp / b.maxHp, b.team);
 }
 function drawProj(p) {
   const t = p.tx;
@@ -832,7 +1168,6 @@ function drawHUDAI() {
   ctx.fillRect(0, b, W, H - b);
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(0, b, W, 1.5);
-  // 皇冠与计时
   ctx.font = 'bold 15px "Microsoft YaHei",sans-serif';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
@@ -847,21 +1182,17 @@ function drawHUDAI() {
   const m = Math.floor(Math.max(0, state.time) / 60);
   const s = Math.floor(Math.max(0, state.time) % 60);
   ctx.fillText(m + ':' + (s < 10 ? '0' : '') + s, W / 2, b + 16);
-  // 圣水条
   elixirBar(0, 30, b + 30, W - 60, 18);
-  // 手牌
   ui.hand = [];
   drawHand(0, 12, b + 56, 84, 84, 8, ui.hand);
 }
 function drawHUDPvP() {
-  // 顶部 HUD：玩家2（红方，team1）
   ctx.fillStyle = '#1d2a3a';
   ctx.fillRect(0, 0, W, F.top);
   ctx.fillStyle = 'rgba(255,255,255,0.06)';
   ctx.fillRect(0, F.top - 1.5, W, 1.5);
   ui.hand2 = [];
   drawHand(1, 12, 4, 84, 80, 8, ui.hand2);
-  // 顶部信息行：皇冠 + 计时
   ctx.font = 'bold 14px "Microsoft YaHei",sans-serif';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
@@ -874,7 +1205,6 @@ function drawHUDPvP() {
   const s = Math.floor(Math.max(0, state.time) % 60);
   ctx.fillText(m + ':' + (s < 10 ? '0' : '') + s, W / 2, 100);
   elixirBar(1, 30, 114, W - 60, 16);
-  // 底部 HUD：玩家1（蓝方，team0）
   const b = F.bottom;
   ctx.fillStyle = '#1d2a3a';
   ctx.fillRect(0, b, W, H - b);
@@ -896,9 +1226,10 @@ function drawDrags() {
   for (const d of drags.values()) {
     if (d.y >= F.top && d.y <= F.bottom) {
       const card = CARDS[d.id];
+      const rad = card.type === 'spell' ? (card.radius || 40) : card.r + 10;
       const ok = canDeploy(d.id, d.x, d.y, d.team);
       ctx.beginPath();
-      ctx.arc(d.x, d.y, card.type === 'spell' ? card.radius : card.r + 10, 0, Math.PI * 2);
+      ctx.arc(d.x, d.y, rad, 0, Math.PI * 2);
       ctx.fillStyle = ok ? 'rgba(90,200,120,0.25)' : 'rgba(255,60,50,0.25)';
       ctx.fill();
       ctx.strokeStyle = ok ? '#5ec878' : '#ff5a4e';
@@ -916,7 +1247,6 @@ function drawMenu() {
   ui.menu = [];
   ctx.fillStyle = '#14203a';
   ctx.fillRect(0, 0, W, H);
-  // 星空
   for (let i = 0; i < 46; i++) {
     const sx = (i * 97 + 13) % W, sy = (i * 53 + 29) % 300;
     ctx.globalAlpha = 0.25 + 0.35 * Math.abs(Math.sin(clock * 1.5 + i));
@@ -924,7 +1254,6 @@ function drawMenu() {
     ctx.beginPath(); ctx.arc(sx, sy, 1.2, 0, Math.PI * 2); ctx.fill();
   }
   ctx.globalAlpha = 1;
-  // 标题
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   const tg = ctx.createLinearGradient(0, 44, 0, 100);
   tg.addColorStop(0, '#ffe9a8'); tg.addColorStop(0.5, '#ffd94d'); tg.addColorStop(1, '#e8a33c');
@@ -934,7 +1263,6 @@ function drawMenu() {
   ctx.font = 'bold 13px Consolas,monospace';
   ctx.fillStyle = '#8fa3c0';
   ctx.fillText('C R O W N   D U E L', W / 2, 104);
-  // 竞技场横幅
   const arena = arenaOf(), next = nextArena();
   const ax = 50, ay = 122, aw = W - 100, ah = 96;
   rr(ax, ay, aw, ah, 14);
@@ -950,7 +1278,6 @@ function drawMenu() {
   ctx.fillStyle = '#ffd94d';
   ctx.fillText('🪙 ' + save.gold, ax + aw - 34, ay + 54);
   ctx.textAlign = 'left';
-  // 晋级进度条
   if (next) {
     const pct = clamp((save.trophies - arena.min) / (next.min - arena.min), 0, 1);
     rr(ax + 16, ay + 64, aw - 32, 10, 5);
@@ -967,7 +1294,6 @@ function drawMenu() {
     ctx.fillStyle = '#ffd94d';
     ctx.fillText('👑 已登顶最高竞技场!', ax + 16, ay + 82);
   }
-  // 主按钮
   const btns = [
     { id: 'ai', label: '⚔ 单人挑战', y: 238 },
     { id: 'pvp', label: '👥 双人对战', y: 298 },
@@ -983,7 +1309,6 @@ function drawMenu() {
     ctx.fillText(b.label, W / 2, b.y + bh / 2 + 1);
     ui.menu.push({ id: b.id, x: bx, y: b.y, w: bw, h: bh });
   }
-  // 难度选择（影响单人 AI）
   const dy = 428;
   const diffs = [['简单', 0], ['困难', 1]];
   for (let i = 0; i < 2; i++) {
@@ -997,22 +1322,26 @@ function drawMenu() {
     ctx.fillText(diffs[i][0] + (i === 0 ? ' +50🏆' : ' +70🏆'), x + w / 2, dy + h / 2 + 1);
     ui.menu.push({ id: 'diff' + diffs[i][1], x, y: dy, w, h });
   }
-  // 说明
   ctx.textAlign = 'center';
   ctx.font = '12px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#6f829c';
   ctx.fillText('拖拽卡牌到己方半场部署 · 3 分钟内率先摧毁敌方国王塔者获胜', W / 2, 512);
-  ctx.fillText('单人模式：胜利赢得奖杯与金币 · 奖杯解锁更高竞技场', W / 2, 532);
+  ctx.fillText('62 张卡牌 · 单位 / 建筑 / 法术 · 牌库可滚动浏览', W / 2, 532);
   ctx.fillText('双人模式：上方红方 vs 下方蓝方 · 支持多点触控', W / 2, 552);
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#54687e';
-  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v2.0', W / 2, H - 24);
+  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.0', W / 2, H - 24);
+}
+function deckMaxScroll() {
+  const ch = 100, gy = 8, y0 = 84;
+  const rows = Math.ceil(DECK.length / 2);
+  const contentH = rows * (ch + gy) + y0 + 8;
+  return Math.max(0, contentH - 84 - (H - 84 - 8));
 }
 function drawDeck() {
   ui.deck = [];
   ctx.fillStyle = '#14203a';
   ctx.fillRect(0, 0, W, H);
-  // 头部
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.font = 'bold 22px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#ffd94d';
@@ -1021,7 +1350,6 @@ function drawDeck() {
   ctx.font = 'bold 16px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#ffd94d';
   ctx.fillText('🪙 ' + save.gold, W - 20, 32);
-  // 返回按钮
   const bx = 20, by = 44, bw = 64, bh = 30;
   rr(bx, by, bw, bh, 15);
   ctx.fillStyle = '#2a3a4e'; ctx.fill();
@@ -1031,19 +1359,21 @@ function drawDeck() {
   ctx.fillStyle = '#e8eef7';
   ctx.fillText('← 返回', bx + bw / 2, by + bh / 2 + 1);
   ui.deck.push({ id: 'back', x: bx, y: by, w: bw, h: bh });
-  // 卡牌列表（2 列 × 6 行）
+  // 滚动列表（2 列 × N 行）
   const cw = 172, ch = 100, gx = 16, gy = 8, y0 = 84;
+  const maxScroll = deckMaxScroll();
+  deckScroll = clamp(deckScroll, 0, maxScroll);
   for (let i = 0; i < DECK.length; i++) {
     const id = DECK[i];
     const card = CARDS[id];
     const lv = lvOf(id);
     const m = mult(lv);
     const cx = 30 + (i % 2) * (cw + gx);
-    const cy = y0 + Math.floor(i / 2) * (ch + gy);
+    const cy = y0 + Math.floor(i / 2) * (ch + gy) - deckScroll;
+    if (cy + ch < y0 || cy > H) continue;   // 视口外跳过
     rr(cx, cy, cw, ch, 12);
     ctx.fillStyle = '#1c2a3e'; ctx.fill();
     ctx.strokeStyle = '#40556e'; ctx.lineWidth = 1.5; ctx.stroke();
-    // 图标与名称
     ctx.textAlign = 'left';
     ctx.font = '20px "Segoe UI Emoji",sans-serif';
     ctx.fillText(card.emoji, cx + 10, cy + 18);
@@ -1054,18 +1384,15 @@ function drawDeck() {
     ctx.font = 'bold 11px Consolas,monospace';
     ctx.fillStyle = lv >= MAX_LV ? '#ffd94d' : '#7fa8ff';
     ctx.fillText('Lv.' + lv, cx + cw - 10, cy + 18);
-    // 属性
     ctx.textAlign = 'left';
     ctx.font = '10px "Microsoft YaHei",sans-serif';
     ctx.fillStyle = '#8fa3c0';
-    if (card.id === 'heal') {
-      ctx.fillText('治疗 ' + Math.round(card.dmg * m), cx + 10, cy + 54);
-    } else if (card.type === 'spell') {
-      ctx.fillText('范围伤害 ' + Math.round(card.dmg * m), cx + 10, cy + 54);
-    } else {
-      ctx.fillText('生命 ' + Math.round(card.hp * m) + ' · 伤害 ' + Math.round(card.dmg * m), cx + 10, cy + 54);
-    }
-    // 升级按钮
+    let desc;
+    if (card.id === 'heal') desc = '治疗 ' + Math.round(card.dmg * m);
+    else if (card.type === 'spell') desc = '法术威力 ' + Math.round(card.dmg * m);
+    else if (card.type === 'building') desc = '生命 ' + Math.round(card.hp * m) + (card.dmg > 0 ? ' · 伤害 ' + Math.round(card.dmg * m) : ' · 建筑');
+    else desc = '生命 ' + Math.round(card.hp * m) + ' · 伤害 ' + Math.round(card.dmg * m);
+    ctx.fillText(desc, cx + 10, cy + 54);
     const ubx = cx + 10, uby = cy + 62, ubw = cw - 20, ubh = 28;
     rr(ubx, uby, ubw, ubh, 10);
     const maxed = lv >= MAX_LV;
@@ -1079,6 +1406,15 @@ function drawDeck() {
     ctx.fillStyle = maxed ? '#ffd94d' : afford ? '#fff' : '#6f829c';
     ctx.fillText(maxed ? '★ 已满级' : '升级 🪙' + upgradeCost(lv), cx + cw / 2, uby + ubh / 2 + 1);
     ui.deck.push({ id: 'up:' + id, x: ubx, y: uby, w: ubw, h: ubh });
+  }
+  // 滚动条
+  if (maxScroll > 0) {
+    const viewH = H - 84 - 8;
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(W - 6, 84, 4, viewH);
+    const thumbH = Math.max(30, viewH * (viewH / (viewH + maxScroll)));
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillRect(W - 6, 84 + (deckScroll / maxScroll) * (viewH - thumbH), 4, thumbH);
   }
 }
 function drawOver() {
@@ -1129,12 +1465,14 @@ function render() {
   ctx.save();
   if (state.shake > 0) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
   drawArena();
+  drawZones();
   for (const tw of state.towers) if (!tw.dead) drawTower(tw);
+  for (const b of state.buildings) drawBuilding(b);
   const sorted = state.units.slice().sort((a, b) => a.y - b.y);
   for (const u of sorted) drawUnit(u);
   for (const p of state.projs) drawProj(p);
   drawParticles();
-  for (const tw of state.towers) if (tw.dead) drawTower(tw);   // 塔的残骸
+  for (const tw of state.towers) if (tw.dead) drawTower(tw);
   ctx.restore();
   drawHUD();
   drawDrags();
@@ -1179,6 +1517,7 @@ canvas.addEventListener('pointerdown', (e) => {
       else if (b.id.startsWith('up:')) upgradeCard(b.id.slice(3));
       return;
     }
+    deckDrag = { y: p.y, s: deckScroll };   // 拖拽滚动
     return;
   }
   if (state.screen === 'over') {
@@ -1209,13 +1548,18 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 });
 window.addEventListener('pointermove', (e) => {
+  const p = toCanvas(e);
+  if (state.screen === 'deck' && deckDrag) {
+    deckScroll = clamp(deckDrag.s + (deckDrag.y - p.y), 0, deckMaxScroll());
+    return;
+  }
   const d = drags.get(e.pointerId);
   if (!d) return;
-  const p = toCanvas(e);
   d.x = p.x; d.y = p.y;
   if (Math.hypot(p.x - d.sx, p.y - d.sy) > 10) d.moved = true;
 });
 window.addEventListener('pointerup', (e) => {
+  if (state.screen === 'deck') { deckDrag = null; return; }
   const d = drags.get(e.pointerId);
   if (!d) return;
   const p = toCanvas(e);
@@ -1225,6 +1569,12 @@ window.addEventListener('pointerup', (e) => {
   drags.delete(e.pointerId);   // 未移动的点击保留 select，走点选部署流程
 });
 window.addEventListener('pointercancel', (e) => { drags.delete(e.pointerId); });
+canvas.addEventListener('wheel', (e) => {
+  if (state.screen === 'deck') {
+    e.preventDefault();
+    deckScroll = clamp(deckScroll + e.deltaY, 0, deckMaxScroll());
+  }
+}, { passive: false });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 /* ---------------- 静音按钮 ---------------- */
