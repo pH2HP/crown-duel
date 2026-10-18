@@ -21,7 +21,8 @@ const W = 420, H = 740;                    // 逻辑分辨率
 const MATCH_TIME = 180;                    // 对局时长（秒）
 const ELIXIR_MAX = 10, ELIXIR_START = 5, ELIXIR_RATE = 1 / 2.8;
 const MAX_LV = 9;                          // 卡牌最高等级
-const BRIDGE_X = W / 2;                    // 桥的位置（纯装饰）
+const BRIDGE_X = W / 2;                    // 桥的位置
+const BRIDGE_HALF = 55;                    // 桥的半宽（地面单位只能从桥上过河）
 const F = { top: 0, bottom: 565, riverTop: 252, riverBot: 302 };   // 战场几何（每局按模式计算）
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -44,14 +45,14 @@ function shuffle(arr) {
 const CARD_DEFS = [
   // —— 原有 12 张 ——
   ['swordsman',   '剑士',       '⚔️',  3, 'unit',     680,  95,  1.0, 22,  60,  'any', 14, null],
-  ['knight',      '骑士',       '🐴',  4, 'unit',     1100, 120, 1.1, 22,  66,  'any', 14, null],
+  ['knight',      '骑士',       '🐴',  3, 'unit',     1100, 120, 1.1, 22,  66,  'any', 14, null],
   ['archer',      '弓手',       '🏹',  3, 'unit',     270,  70,  1.0, 95,  60,  'any', 12, null],
   ['rascals',     '盗贼团伙',   '🥷',  3, 'unit',     215,  66,  1.1, 20,  74,  'any', 11, { count: 3 }],
   ['bomber',      '炮手',       '💣',  4, 'unit',     350,  140, 1.9, 95,  50,  'any', 13, { splash: 50 }],
-  ['ogre',        '食人魔',     '👹',  5, 'unit',     1950, 150, 1.5, 26,  38,  'buildings', 20, null],
-  ['giant',       '巨人',       '🗿',  6, 'unit',     2800, 110, 1.7, 28,  33,  'buildings', 21, null],
-  ['pyromancer',  '火法师',     '🧙',  5, 'unit',     500,  125, 1.4, 105, 50,  'any', 13, { splash: 58 }],
-  ['guard',       '王冠守卫',   '🛡️', 5, 'unit',     1500, 165, 1.6, 24,  42,  'any', 16, null],
+  ['ogre',        '食人魔',     '👹',  4, 'unit',     1950, 150, 1.5, 26,  38,  'buildings', 20, null],
+  ['giant',       '巨人',       '🗿',  5, 'unit',     2800, 110, 1.7, 28,  33,  'buildings', 21, null],
+  ['pyromancer',  '火法师',     '🧙',  4, 'unit',     500,  125, 1.4, 105, 50,  'any', 13, { splash: 58 }],
+  ['guard',       '王冠守卫',   '🛡️', 4, 'unit',     1500, 165, 1.6, 24,  42,  'any', 16, null],
   ['fireball',    '火球术',     '💥',  4, 'spell',    0,    310, 0,   0,   0,   'any', 0,  { radius: 72, towerFactor: 0.55 }],
   ['arrows',      '箭雨',       '🌧️', 3, 'spell',    0,    105, 0,   0,   0,   'any', 0,  { radius: 95, towerFactor: 0.4 }],
   ['heal',        '治疗术',     '💚',  3, 'spell',    0,    180, 0,   0,   0,   'any', 0,  { radius: 90 }],
@@ -60,55 +61,55 @@ const CARD_DEFS = [
   ['spearGoblin',   '掷矛哥布林',   '🎯',  2, 'unit', 90,   55,  1.3, 110, 105, 'any', 10, null],
   ['goblinThrower', '哥布林投手',   '🧪',  3, 'unit', 160,  90,  1.5, 100, 90,  'any', 11, null],
   ['barbarian',     '野蛮人',       '🪓',  4, 'unit', 900,  105, 1.4, 24,  60,  'any', 15, null],
-  ['eliteBarbarian','精英野蛮人',   '🦾',  6, 'unit', 1350, 160, 1.3, 24,  66,  'any', 15, null],
+  ['eliteBarbarian','精英野蛮人',   '🦾',  5, 'unit', 1350, 160, 1.3, 24,  66,  'any', 15, null],
   ['skeleton',      '骷髅兵',       '💀',  2, 'unit', 90,   55,  1.0, 20,  95,  'any', 9,  { count: 4 }],
-  ['skeletonKing',  '骷髅王',       '🦴',  5, 'unit', 1700, 135, 1.5, 26,  55,  'any', 18, null],
+  ['skeletonKing',  '骷髅王',       '🦴',  4, 'unit', 1700, 135, 1.5, 26,  55,  'any', 18, null],
   ['valkyrie',      '女武神',       '🌪️', 4, 'unit', 1100, 130, 1.5, 26,  60,  'any', 16, { splash: 45 }],
-  ['darkPrince',    '黑暗王子',     '🖤',  5, 'unit', 1200, 150, 1.4, 26,  60,  'any', 16, { splash: 40 }],
-  ['prince',        '王子',         '🤴',  5, 'unit', 1400, 220, 1.6, 26,  70,  'any', 15, null],
+  ['darkPrince',    '黑暗王子',     '🖤',  4, 'unit', 1200, 150, 1.4, 26,  60,  'any', 16, { splash: 40 }],
+  ['prince',        '王子',         '🤴',  4, 'unit', 1400, 220, 1.6, 26,  70,  'any', 15, null],
   ['shieldMaiden',  '盾女',         '⚜️',  3, 'unit', 850,  90,  1.2, 22,  55,  'any', 14, null],
   ['iceGolem',      '冰石人',       '⛄',  3, 'unit', 1000, 50,  2.0, 24,  45,  'any', 18, { slow: { t: 1.5, f: 0.5 } }],
   ['miniPekka',     '迷你皮卡',     '🔪',  4, 'unit', 1100, 260, 1.7, 24,  66,  'any', 15, null],
-  ['werewolf',      '狼人',         '🐺',  5, 'unit', 1250, 170, 1.3, 24,  70,  'any', 16, null],
+  ['werewolf',      '狼人',         '🐺',  4, 'unit', 1250, 170, 1.3, 24,  70,  'any', 16, null],
   ['goblinGang',    '哥布林大军',   '🪃',  4, 'unit', 95,   60,  1.2, 22,  100, 'any', 10, { count: 5 }],
-  ['pekka',         '皮卡超人',     '🗡️', 7, 'unit', 2800, 320, 1.9, 26,  36,  'any', 21, null],
+  ['pekka',         '皮卡超人',     '🗡️', 6, 'unit', 2800, 320, 1.9, 26,  36,  'any', 21, null],
   // —— 远程 / 飞行单位 ——
-  ['musketeer',    '火枪手',       '🔫',  5, 'unit', 420,  150, 1.5, 150, 55,  'any', 12, null],
-  ['wizard',       '法师',         '🔮',  5, 'unit', 520,  135, 1.4, 105, 50,  'any', 13, { splash: 50 }],
+  ['musketeer',    '火枪手',       '🔫',  4, 'unit', 420,  150, 1.5, 150, 55,  'any', 12, null],
+  ['wizard',       '法师',         '🔮',  4, 'unit', 520,  135, 1.4, 105, 50,  'any', 13, { splash: 50 }],
   ['iceWizard',    '寒冰法师',     '🥶',  3, 'unit', 400,  75,  1.6, 100, 50,  'any', 12, { slow: { t: 1.2, f: 0.55 } }],
   ['knightArcher', '骑射手',       '🏇',  4, 'unit', 500,  85,  1.3, 110, 80,  'any', 13, null],
-  ['babyDragon',   '飞龙宝宝',     '🐲',  5, 'unit', 800,  110, 1.5, 85,  65,  'any', 16, { fly: true, splash: 45 }],
+  ['babyDragon',   '飞龙宝宝',     '🐲',  4, 'unit', 800,  110, 1.5, 85,  65,  'any', 16, { fly: true, splash: 45 }],
   ['minions',      '亡灵',         '👻',  3, 'unit', 150,  60,  1.1, 22,  88,  'any', 10, { count: 3, fly: true }],
-  ['minionHorde',  '亡灵大军',     '🌑',  5, 'unit', 150,  60,  1.1, 22,  88,  'any', 10, { count: 6, fly: true }],
+  ['minionHorde',  '亡灵大军',     '🌑',  4, 'unit', 150,  60,  1.1, 22,  88,  'any', 10, { count: 6, fly: true }],
   ['bats',         '蝙蝠',         '🦇',  2, 'unit', 65,   35,  1.0, 20,  105, 'any', 8,  { count: 5, fly: true }],
-  ['lavaHound',    '熔岩猎犬',     '🐕',  8, 'unit', 3200, 65,  1.6, 24,  45,  'any', 22, { fly: true }],
+  ['lavaHound',    '熔岩猎犬',     '🐕',  7, 'unit', 3200, 65,  1.6, 24,  45,  'any', 22, { fly: true }],
   ['phoenix',      '凤凰',         '🐦‍🔥', 4, 'unit', 700, 120,  1.4, 85,  70,  'any', 15, { fly: true }],
-  ['griffin',      '狮鹫',         '🦅',  5, 'unit', 1000, 140, 1.4, 90,  75,  'any', 17, { fly: true, splash: 40 }],
+  ['griffin',      '狮鹫',         '🦅',  4, 'unit', 1000, 140, 1.4, 90,  75,  'any', 17, { fly: true, splash: 40 }],
   // —— 攻城单位 ——
   ['hogRider',   '野猪骑士',   '🐗',  4, 'unit', 1250, 140, 1.5, 24,  95,  'buildings', 15, null],
   ['ramRider',   '攻城锤手',   '🔨',  4, 'unit', 1100, 120, 1.4, 24,  90,  'buildings', 15, null],
-  ['royalGiant', '皇家巨人',   '🏰',  7, 'unit', 3200, 180, 1.8, 95,  30,  'buildings', 22, null],
-  ['golem',      '石头人',     '🪨',  8, 'unit', 3800, 150, 2.0, 28,  26,  'buildings', 23, null],
-  ['goblinGiant','哥布林巨人', '🎒',  6, 'unit', 2600, 110, 1.6, 26,  36,  'buildings', 21, null],
-  ['balloon',    '气球兵',     '🎈',  5, 'unit', 900,  420, 2.2, 24,  55,  'buildings', 19, { fly: true, splash: 70 }],
+  ['royalGiant', '皇家巨人',   '🏰',  6, 'unit', 3200, 180, 1.8, 95,  30,  'buildings', 22, null],
+  ['golem',      '石头人',     '🪨',  7, 'unit', 3800, 150, 2.0, 28,  26,  'buildings', 23, null],
+  ['goblinGiant','哥布林巨人', '🎒',  5, 'unit', 2600, 110, 1.6, 26,  36,  'buildings', 21, null],
+  ['balloon',    '气球兵',     '🎈',  4, 'unit', 900,  420, 2.2, 24,  55,  'buildings', 19, { fly: true, splash: 70 }],
   // —— 建筑 ——
   ['cannon',      '加农炮',       '🧨',  4, 'building', 1100, 85,  0.9,  150, 0, 'any', 18, { building: { kind: 'shooter' } }],
-  ['mortar',      '迫击炮',       '🎇',  5, 'building', 950,  170, 1.6,  220, 0, 'any', 18, { building: { kind: 'shooter' }, splash: 55 }],
+  ['mortar',      '迫击炮',       '🎇',  4, 'building', 950,  170, 1.6,  220, 0, 'any', 18, { building: { kind: 'shooter' }, splash: 55 }],
   ['tesla',       '特斯拉电磁塔', '⚡',  4, 'building', 900,  75,  0.75, 140, 0, 'any', 16, { building: { kind: 'shooter' } }],
-  ['xBow',        '弩炮',         '☄️', 6, 'building', 1300, 55,  0.35, 260, 0, 'any', 20, { building: { kind: 'shooter' } }],
-  ['goblinHut',   '哥布林小屋',   '🛖',  5, 'building', 1200, 0,   0,    0,   0, 'any', 20, { building: { kind: 'spawner', interval: 4, max: 3, spawn: 'goblin' } }],
+  ['xBow',        '弩炮',         '☄️', 5, 'building', 1300, 55,  0.35, 260, 0, 'any', 20, { building: { kind: 'shooter' } }],
+  ['goblinHut',   '哥布林小屋',   '🛖',  4, 'building', 1200, 0,   0,    0,   0, 'any', 20, { building: { kind: 'spawner', interval: 4, max: 3, spawn: 'goblin' } }],
   ['tombstone',   '骷髅墓碑',     '🪦',  3, 'building', 700,  0,   0,    0,   0, 'any', 16, { building: { kind: 'spawner', interval: 4.5, max: 3, spawn: 'skeleton' } }],
-  ['elixirPump',  '圣水泵',       '🫗',  6, 'building', 1000, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 } }],
+  ['elixirPump',  '圣水泵',       '🫗',  5, 'building', 1000, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 } }],
   // —— 法术 ——
   ['freeze',       '冰冻术',   '🧊',  4, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 95, freeze: 2.2 }],
   ['poison',       '毒药',     '☠️', 4, 'spell', 0, 42,  0, 0, 0, 'any', 0, { radius: 95, zone: 'poison', duration: 6 }],
   ['rage',         '狂暴术',   '🔥',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 110, zone: 'rage', duration: 5, boost: 1.4 }],
   ['log',          '滚木',     '🪵',  2, 'spell', 0, 180, 0, 0, 0, 'any', 0, { radius: 85, logRange: 170, width: 55 }],
-  ['lightning',    '雷电术',   '🌩️', 5, 'spell', 0, 260, 0, 0, 0, 'any', 0, { radius: 130, strikes: 3, towerFactor: 0.35 }],
-  ['rocket',       '火箭',     '🚀',  6, 'spell', 0, 700, 0, 0, 0, 'any', 0, { radius: 45, towerFactor: 0.4 }],
-  ['earthquake',   '地震',     '🌋',  4, 'spell', 0, 250, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 2.2, buildingFactor: 1.5, unitFactor: 0.35 }],
+  ['lightning',    '雷电术',   '🌩️', 4, 'spell', 0, 260, 0, 0, 0, 'any', 0, { radius: 130, strikes: 3, towerFactor: 0.35 }],
+  ['rocket',       '火箭',     '🚀',  5, 'spell', 0, 700, 0, 0, 0, 'any', 0, { radius: 45, towerFactor: 0.4 }],
+  ['earthquake',   '地震',     '🌋',  3, 'spell', 0, 250, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 2.2, buildingFactor: 1.5, unitFactor: 0.35 }],
   ['snowBall',     '雪球',     '❄️', 2, 'spell', 0, 90,  0, 0, 0, 'any', 0, { radius: 60, slow: { t: 1.0, f: 0.55 } }],
-  ['meteorShower', '流星火雨', '💫',  7, 'spell', 0, 380, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 0.5 }],
+  ['meteorShower', '流星火雨', '💫',  6, 'spell', 0, 380, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 0.5 }],
   ['mirror',       '镜像术',   '🪞',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 60 }],
 ];
 const CARDS = {};
@@ -117,6 +118,27 @@ for (const d of CARD_DEFS) {
   const [id, name, emoji, cost, type, hp, dmg, atk, range, speed, targets, r, ext] = d;
   CARDS[id] = { id, name, emoji, cost, type, hp, dmg, atk, range, speed, targets, r, ...(ext || {}) };
   DECK.push(id);
+}
+
+/* ---------------- 卡组系统（每场对局双方各携带 8 张） ---------------- */
+const DECK_SIZE = 8;
+const DEFAULT_DECK = ['swordsman', 'knight', 'archer', 'rascals', 'goblin', 'fireball', 'arrows', 'heal'];
+function normalizeDeck(arr) {
+  // 校验并补齐卡组：只保留存在的卡、去重，不足 8 张按默认卡组补足
+  const out = [];
+  if (Array.isArray(arr)) for (const id of arr) if (CARDS[id] && !out.includes(id)) out.push(id);
+  for (const id of DEFAULT_DECK) if (out.length < DECK_SIZE && !out.includes(id)) out.push(id);
+  for (const id of DECK) if (out.length < DECK_SIZE && !out.includes(id)) out.push(id);
+  return out.slice(0, DECK_SIZE);
+}
+function randomAiDeck() {
+  // AI 每局随机携带 8 张：5 单位 + 2 法术 + 1 建筑，保证有攻有守有解场
+  const d = [];
+  const take = (arr, n) => { let c = 0; for (const id of arr) { if (c >= n) break; if (!d.includes(id)) { d.push(id); c++; } } };
+  take(shuffle(DECK.filter(id => CARDS[id].type === 'unit')), 5);
+  take(shuffle(DECK.filter(id => CARDS[id].type === 'spell')), 2);
+  take(shuffle(DECK.filter(id => CARDS[id].type === 'building')), 1);
+  return d.slice(0, DECK_SIZE);
 }
 
 /* 角色台词（部署语音，不同角色不同音调语速） */
@@ -174,9 +196,10 @@ function loadSave() {
       levels: d.levels || {},
       stats: { ...STATS_DEFAULT, ...(d.stats || {}) },
       match: d.match || null,   // 未完成的对局快照，下次启动可继续
+      deck: normalizeDeck(d.deck),   // 出战的 8 张卡组
     };
   } catch (e) { /* 首次游玩或存档损坏 */ }
-  return { v: 1, trophies: 0, gold: 0, levels: {}, stats: { ...STATS_DEFAULT }, match: null };
+  return { v: 1, trophies: 0, gold: 0, levels: {}, stats: { ...STATS_DEFAULT }, match: null, deck: normalizeDeck(null) };
 }
 function saveGame() {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* 忽略存储失败 */ }
@@ -208,6 +231,7 @@ function applyImportedSave(d) {
     levels: sanitizeLevels(d.levels),
     stats: { ...STATS_DEFAULT, ...(d.stats || {}) },
     match: null,   // 导入后不继承旧对局
+    deck: normalizeDeck(d.deck),
   };
   saveGame();
   return true;
@@ -359,12 +383,17 @@ function sayVoice(id) {
 /* ---------------- 全局状态 ---------------- */
 let uid = 1;
 let state = { screen: 'menu', difficulty: 0 };
-const ui = { menu: [], deck: [], over: [], hand: [], hand2: [] };   // 命中区域（每帧重建）
+const ui = { menu: [], deck: [], deckedit: [], over: [], hand: [], hand2: [] };   // 命中区域（每帧重建）
 const drags = new Map();    // pointerId -> { id, team, x, y, sx, sy, moved }
 let select = null;          // 点选待部署的卡 { id, team }
 let clock = 0;              // 全局动画时钟
 let deckScroll = 0;         // 牌库滚动
 let deckDrag = null;        // 牌库拖拽滚动状态 { y, s }
+let deckSel = null;         // 卡组编辑中已选卡牌（进入编辑界面时从存档载入）
+let deckEditScroll = 0;     // 卡组编辑滚动
+let deckEditDrag = null;    // 卡组编辑拖拽滚动状态 { y, s }
+let deckEditMsg = '';       // 卡组编辑提示
+let deckEditMsgT = 0;       // 卡组编辑提示剩余时间
 
 /* ---------------- 实体 ---------------- */
 function makeTower(team, kind, x, y) {
@@ -372,7 +401,7 @@ function makeTower(team, kind, x, y) {
   return {
     isTower: true, id: uid++, team, kind, x, y, r: king ? 30 : 26,
     hp: king ? 4200 : 2800, maxHp: king ? 4200 : 2800,
-    dmg: king ? 68 : 52, atk: 0.7, range: king ? 135 : 150,
+    dmg: king ? 68 : 52, atk: 0.7, range: king ? 165 : 180,
     cooldown: 0, awake: !king, dead: false,
   };
 }
@@ -403,10 +432,10 @@ function makeProj(src, target) {
 }
 
 /* ---------------- 对局初始化 ---------------- */
-function drawN(queue, n) {
+function drawN(queue, n, deck) {
   const out = [];
   for (let i = 0; i < n; i++) {
-    if (!queue.length) queue.push(...shuffle(DECK));
+    if (!queue.length) queue.push(...shuffle(deck));   // 牌堆循环只从本局卡组（8 张）中发牌
     out.push(queue.shift());
   }
   return out;
@@ -422,7 +451,10 @@ function newGame(mode, difficulty) {
   F.bottom = pvp ? 612 : 565;
   const cy = (F.top + F.bottom) / 2;
   F.riverTop = cy - 25; F.riverBot = cy + 25;
-  const aiLv = clamp(Math.round(DECK.reduce((s, id) => s + lvOf(id), 0) / DECK.length), 1, MAX_LV);
+  // 卡组：我方用保存的卡组；AI 每局随机 8 张；双人模式双方共用我方卡组
+  const deck0 = normalizeDeck(save.deck);
+  const deck1 = mode === 'pvp' ? deck0.slice() : randomAiDeck();
+  const aiLv = clamp(Math.round(deck0.reduce((s, id) => s + lvOf(id), 0) / deck0.length), 1, MAX_LV);
   state = {
     mode, difficulty, screen: 'playing', over: false,
     time: MATCH_TIME, elapsed: 0, doubleSaid: false,
@@ -435,11 +467,12 @@ function newGame(mode, difficulty) {
     ],
     crowns: [0, 0], shake: 0, win: null, reason: '', reward: null,
     arena: arenaOf(), aiLv,
+    decks: [deck0.slice(), deck1.slice()],
     ai: { t: 1.2 },
     saveT: 3,   // 对局进度定期保存倒计时
   };
-  state.queue = [shuffle(DECK), shuffle(DECK)];
-  state.hand = [drawN(state.queue[0], 4), drawN(state.queue[1], 4)];
+  state.queue = [shuffle(deck0), shuffle(deck1)];
+  state.hand = [drawN(state.queue[0], 4, deck0), drawN(state.queue[1], 4, deck1)];
   drags.clear(); select = null;
   save.match = null;   // 新开对局清掉旧的未完成对局
   saveGame();
@@ -454,6 +487,7 @@ function serializeMatch() {
     elixir: state.elixir.slice(), crowns: state.crowns.slice(),
     hand: [state.hand[0].slice(), state.hand[1].slice()],
     queue: [state.queue[0].slice(), state.queue[1].slice()],
+    decks: [state.decks[0].slice(), state.decks[1].slice()],
     aiLv: state.aiLv, aiT: state.ai.t,
     towers: state.towers.map(t => ({ id: t.id, team: t.team, kind: t.kind, x: t.x, y: t.y, hp: t.hp, awake: t.awake, cooldown: t.cooldown, dead: t.dead })),
     units: state.units.map(u => ({ id: u.id, card: u.card.id, team: u.team, x: u.x, y: u.y, lv: u.lv, hp: u.hp, cooldown: u.cooldown, freeze: u.freeze, slowT: u.slowT, slowF: u.slowF, target: u.target ? u.target.id : null })),
@@ -496,6 +530,7 @@ function restoreMatch(d) {
     crowns: d.crowns, shake: 0, win: null, reason: '', reward: null,
     arena: arenaOf(), aiLv: d.aiLv,
     queue: d.queue, hand: d.hand, lastUnit: d.lastUnit,
+    decks: d.decks ? [normalizeDeck(d.decks[0]), normalizeDeck(d.decks[1])] : [DECK.slice(), DECK.slice()],
     ai: { t: d.aiT || 0 },
     saveT: 3,
   };
@@ -685,14 +720,20 @@ function updateUnits(dt) {
     const rz = state.zones.find(z => z.kind === 'rage' && z.team === u.team && dist2(u.x, u.y, z.x, z.y) < z.r);
     const spd = u.speed * (u.slowT > 0 ? u.slowF : 1) * (rz ? rz.boost : 1);
     if (!t) {
-      u.y += spd * dt * (u.team === 0 ? -1 : 1);
+      // 无目标：向敌方推进；地面单位过河同样走桥
+      if (u.card.fly) {
+        u.y += spd * dt * (u.team === 0 ? -1 : 1);
+      } else {
+        const wp = riverWaypoint(u, { x: u.x, y: u.team === 0 ? F.top + 10 : F.bottom - 10 });
+        if (wp) moveBy(u, wp.x, wp.y, spd, dt);
+        else u.y += spd * dt * (u.team === 0 ? -1 : 1);
+      }
     } else {
       const rr = u.r + (t.r || 0) + (u.card.range || 0);
       const d = dist2(u.x, u.y, t.x, t.y);
       if (d > rr) {
-        const sp = spd * dt;
-        u.x += (t.x - u.x) / d * sp;
-        u.y += (t.y - u.y) / d * sp;
+        const wp = u.card.fly ? null : riverWaypoint(u, t);
+        moveBy(u, wp ? wp.x : t.x, wp ? wp.y : t.y, spd, dt);
       } else if (u.cooldown <= 0) {
         u.cooldown = u.card.atk;
         u.lunge = 1;
@@ -701,7 +742,33 @@ function updateUnits(dt) {
     }
     u.x = clamp(u.x, 16, W - 16);
     u.y = clamp(u.y, F.top + 14, F.bottom - 14);
+    // 兜底：地面单位不得站在桥外的河面上
+    if (!u.card.fly && u.y > F.riverTop && u.y < F.riverBot && Math.abs(u.x - BRIDGE_X) > BRIDGE_HALF) {
+      u.y = u.team === 0 ? F.riverBot : F.riverTop;
+    }
   }
+}
+
+function moveBy(u, tx, ty, spd, dt) {
+  const d = dist2(u.x, u.y, tx, ty);
+  if (d < 0.001) return;
+  const sp = Math.min(spd * dt, d);
+  u.x += (tx - u.x) / d * sp;
+  u.y += (ty - u.y) / d * sp;
+}
+function riverWaypoint(u, t) {
+  // 地面单位过河必须走桥：先到桥头（己方一侧），再垂直过桥到对岸；飞行单位不受限
+  if (u.card.fly) return null;
+  const across = u.team === 0 ? (u.y > F.riverTop && t.y < F.riverTop) : (u.y < F.riverBot && t.y > F.riverBot);
+  if (!across) return null;
+  const bx = clamp(u.x, BRIDGE_X - BRIDGE_HALF, BRIDGE_X + BRIDGE_HALF);
+  const own = u.team === 0 ? F.riverBot + 12 : F.riverTop - 12;
+  const far = u.team === 0 ? F.riverTop - 12 : F.riverBot + 12;
+  if (Math.abs(u.x - BRIDGE_X) > BRIDGE_HALF || (u.team === 0 ? u.y > own + 6 : u.y < own - 6)) {
+    return { x: bx, y: own };   // 先绕行到桥头
+  }
+  if (u.team === 0 ? u.y > far : u.y < far) return { x: bx, y: far };   // 垂直过桥
+  return null;   // 已过河，直接奔向目标
 }
 
 /* ---------------- 防御塔与箭矢 ---------------- */
@@ -945,7 +1012,7 @@ function playCard(id, x, y, team) {
   const lv = levelOf(team, id);
   state.elixir[team] -= card.cost;
   state.hand[team].splice(state.hand[team].indexOf(id), 1);
-  state.hand[team].push(drawN(state.queue[team], 1)[0]);
+  state.hand[team].push(drawN(state.queue[team], 1, state.decks[team])[0]);
   if (card.type === 'spell') {
     castSpell(card, x, y, team, lv);
   } else if (card.type === 'building') {
@@ -1033,7 +1100,7 @@ function aiUpdate(dt) {
   }
   // 3) 拍出兵营建筑（上限 2 座）
   const spawnerCard = hand.find(id => CARDS[id].type === 'building' && CARDS[id].building && CARDS[id].building.kind === 'spawner');
-  if (spawnerCard && state.buildings.filter(b => b.team === 1).length < 2 && el >= 6.5) {
+  if (spawnerCard && state.buildings.filter(b => b.team === 1).length < 2 && el >= 5) {
     const lane = Math.random() < 0.5 ? 105 : 315;
     playCard(spawnerCard, lane, F.top + 215, 1);
     return;
@@ -1458,8 +1525,9 @@ function drawMenu() {
   const btns = [];
   if (hasMatch) btns.push({ id: 'resume', label: '▶ 继续上次对局', y: 234, accent: true });
   btns.push({ id: 'ai', label: '⚔ 单人挑战', y: hasMatch ? 286 : 238 });
-  btns.push({ id: 'pvp', label: '👥 双人对战', y: hasMatch ? 336 : 298 });
-  btns.push({ id: 'deck', label: '🃏 卡牌升级', y: hasMatch ? 386 : 358 });
+  btns.push({ id: 'pvp', label: '👥 双人对战', y: hasMatch ? 334 : 286 });
+  btns.push({ id: 'deck', label: '🃏 卡牌升级', y: hasMatch ? 382 : 334 });
+  btns.push({ id: 'deckedit', label: '🎴 选择卡组（8 张）', y: hasMatch ? 430 : 382 });
   ctx.textAlign = 'center';
   for (const b of btns) {
     const bw = 260, bh = b.accent ? 44 : 50, bx = W / 2 - bw / 2;
@@ -1471,7 +1539,7 @@ function drawMenu() {
     ctx.fillText(b.label, W / 2, b.y + bh / 2 + 1);
     ui.menu.push({ id: b.id, x: bx, y: b.y, w: bw, h: bh });
   }
-  const dy = hasMatch ? 440 : 428;
+  const dy = hasMatch ? 478 : 428;
   const diffs = [['简单', 0], ['困难', 1]];
   for (let i = 0; i < 2; i++) {
     const x = W / 2 - 112 + i * 124, w = 100, h = 38;
@@ -1489,7 +1557,11 @@ function drawMenu() {
   ctx.textAlign = 'center';
   ctx.font = '12px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#8fa3c0';
-  ctx.fillText('📊 总场次 ' + (st.played || 0) + ' · 胜 ' + (st.wins || 0) + ' · 负 ' + (st.losses || 0) + ' · 平 ' + (st.draws || 0) + ' · 最高 🏆' + (st.best || save.trophies || 0), W / 2, hasMatch ? 496 : 484);
+  ctx.fillText('📊 总场次 ' + (st.played || 0) + ' · 胜 ' + (st.wins || 0) + ' · 负 ' + (st.losses || 0) + ' · 平 ' + (st.draws || 0) + ' · 最高 🏆' + (st.best || save.trophies || 0), W / 2, hasMatch ? 532 : 484);
+  // 当前出战卡组
+  ctx.font = '12px "Segoe UI Emoji","Microsoft YaHei",sans-serif';
+  ctx.fillStyle = '#a8bcd8';
+  ctx.fillText('出战卡组 ' + save.deck.map(id => CARDS[id] ? CARDS[id].emoji : '❓').join(' '), W / 2, hasMatch ? 548 : 500);
   // 存档导入 / 导出
   const eb = [{ id: 'export', label: '📤 导出存档', x: 30 }, { id: 'import', label: '📥 导入存档', x: 220 }];
   for (const b of eb) {
@@ -1503,13 +1575,12 @@ function drawMenu() {
   }
   ctx.font = '12px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#6f829c';
-  const hy = hasMatch ? 520 : 512;
+  const hy = hasMatch ? 566 : 512;
   ctx.fillText('拖拽卡牌到己方半场部署 · 3 分钟内率先摧毁敌方国王塔者获胜', W / 2, hy);
-  ctx.fillText('62 张卡牌 · 单位 / 建筑 / 法术 · 牌库可滚动浏览', W / 2, hy + 20);
-  ctx.fillText('双人模式：上方红方 vs 下方蓝方 · 支持多点触控', W / 2, hy + 40);
+  ctx.fillText('地面单位只能从桥过河 · 飞行单位可任意飞越', W / 2, hy + 20);
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#54687e';
-  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.1', W / 2, H - 24);
+  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.2', W / 2, H - 24);
 }
 function deckMaxScroll() {
   const ch = 100, gy = 8, y0 = 84;
@@ -1596,6 +1667,128 @@ function drawDeck() {
     ctx.fillRect(W - 6, 84 + (deckScroll / maxScroll) * (viewH - thumbH), 4, thumbH);
   }
 }
+function deckToggle(id) {
+  const i = deckSel.indexOf(id);
+  if (i >= 0) {
+    deckSel.splice(i, 1);
+    AudioSys.deploy();
+    return;
+  }
+  if (deckSel.length >= DECK_SIZE) {
+    deckEditMsg = '卡组已满 8 张，先点掉一张再添加';
+    deckEditMsgT = 1.4;
+    AudioSys.tone(300, 200, 0.15, 'square', 0.3);
+    return;
+  }
+  deckSel.push(id);
+  AudioSys.deploy();
+}
+function deckEditMaxScroll() {
+  const ch = 86, gy = 8, y0 = 84;
+  const rows = Math.ceil(DECK.length / 2);
+  const contentH = rows * (ch + gy) + y0 + 8;
+  return Math.max(0, contentH - 84 - (H - 60 - 10 - 84));
+}
+function drawDeckEdit() {
+  ui.deckedit = [];
+  ctx.fillStyle = '#14203a';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 22px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle = '#ffd94d';
+  ctx.fillText('🎴 选择卡组（出战 8 张）', 20, 32);
+  const ok = deckSel.length === DECK_SIZE;
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 16px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle = ok ? '#5ec878' : '#ffd94d';
+  ctx.fillText('已选 ' + deckSel.length + ' / 8', W - 20, 32);
+  const bx = 20, by = 44, bw = 64, bh = 30;
+  rr(bx, by, bw, bh, 15);
+  ctx.fillStyle = '#2a3a4e'; ctx.fill();
+  ctx.strokeStyle = '#4a5b70'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.font = '13px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle = '#e8eef7';
+  ctx.fillText('← 返回', bx + bw / 2, by + bh / 2 + 1);
+  ui.deckedit.push({ id: 'back', x: bx, y: by, w: bw, h: bh });
+  // 滚动网格（2 列 × N 行），点卡片加入 / 移出卡组
+  const cw = 172, ch = 86, gx = 16, gy = 8, y0 = 84;
+  const maxScroll = deckEditMaxScroll();
+  deckEditScroll = clamp(deckEditScroll, 0, maxScroll);
+  const gridBottom = H - 60 - 14;   // 网格底边（给保存按钮留位）
+  for (let i = 0; i < DECK.length; i++) {
+    const id = DECK[i];
+    const card = CARDS[id];
+    const sel = deckSel.includes(id);
+    const cx = 30 + (i % 2) * (cw + gx);
+    const cy = y0 + Math.floor(i / 2) * (ch + gy) - deckEditScroll;
+    if (cy + ch < y0 || cy > gridBottom) continue;   // 视口外跳过
+    rr(cx, cy, cw, ch, 12);
+    ctx.fillStyle = sel ? '#1e3a2e' : '#1c2a3e'; ctx.fill();
+    ctx.strokeStyle = sel ? '#5ec878' : '#40556e'; ctx.lineWidth = sel ? 2.5 : 1.5; ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.font = '20px "Segoe UI Emoji",sans-serif';
+    ctx.fillText(card.emoji, cx + 10, cy + 16);
+    ctx.font = 'bold 13px "Microsoft YaHei",sans-serif';
+    ctx.fillStyle = '#e8eef7';
+    ctx.fillText(card.name, cx + 10, cy + 38);
+    // 圣水花费
+    ctx.beginPath();
+    ctx.arc(cx + cw - 20, cy + 16, 11, 0, Math.PI * 2);
+    ctx.fillStyle = '#2a3a4e'; ctx.fill();
+    ctx.strokeStyle = '#7fa8ff'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 11px Consolas,monospace';
+    ctx.fillStyle = '#ffd94d';
+    ctx.fillText(card.cost, cx + cw - 20, cy + 17);
+    // 类型说明
+    ctx.textAlign = 'left';
+    ctx.font = '10px "Microsoft YaHei",sans-serif';
+    ctx.fillStyle = '#8fa3c0';
+    let kind;
+    if (card.type === 'unit') kind = card.fly ? '飞行单位' : card.targets === 'buildings' ? '地面单位 · 攻建筑' : '地面单位';
+    else kind = card.type === 'building' ? '建筑' : '法术';
+    ctx.fillText(kind, cx + 10, cy + 54);
+    // 已选角标
+    if (sel) {
+      ctx.beginPath();
+      ctx.arc(cx + cw - 20, cy + ch - 20, 12, 0, Math.PI * 2);
+      ctx.fillStyle = '#5ec878'; ctx.fill();
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillStyle = '#06240f';
+      ctx.fillText('✓', cx + cw - 20, cy + ch - 19);
+    }
+    ui.deckedit.push({ id: 'sel:' + id, x: cx, y: cy, w: cw, h: ch });
+  }
+  // 滚动条
+  if (maxScroll > 0) {
+    const viewH = gridBottom - 84;
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(W - 6, 84, 4, viewH);
+    const thumbH = Math.max(30, viewH * (viewH / (viewH + maxScroll)));
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillRect(W - 6, 84 + (deckEditScroll / maxScroll) * (viewH - thumbH), 4, thumbH);
+  }
+  // 底部保存按钮
+  const sx = 30, sy = H - 60, sw = W - 60, sh = 46;
+  rr(sx, sy, sw, sh, 14);
+  ctx.fillStyle = ok ? '#2e8b4a' : '#2a3a4e'; ctx.fill();
+  ctx.strokeStyle = ok ? '#5ec878' : '#4a5b70'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 18px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle = ok ? '#d8ffe0' : '#6f829c';
+  ctx.fillText(ok ? '💾 保存卡组' : '需选满 8 张（当前 ' + deckSel.length + '）', W / 2, sy + sh / 2 + 1);
+  ui.deckedit.push({ id: 'save', x: sx, y: sy, w: sw, h: sh });
+  // 提示
+  ctx.font = '11px "Microsoft YaHei",sans-serif';
+  if (deckEditMsgT > 0) {
+    ctx.fillStyle = '#ff9966';
+    ctx.fillText(deckEditMsg, W / 2, sy - 26);
+  } else {
+    ctx.fillStyle = '#54687e';
+    ctx.fillText('点击卡牌加入 / 移出卡组 · 对局中双方各携带 8 张卡', W / 2, sy - 26);
+  }
+}
 function drawOver() {
   ui.over = [];
   ctx.fillStyle = 'rgba(8,12,22,0.78)';
@@ -1641,6 +1834,7 @@ function render() {
   ctx.clearRect(0, 0, W, H);
   if (state.screen === 'menu') { drawMenu(); return; }
   if (state.screen === 'deck') { drawDeck(); return; }
+  if (state.screen === 'deckedit') { drawDeckEdit(); return; }
   ctx.save();
   if (state.shake > 0) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
   drawArena();
@@ -1668,6 +1862,7 @@ function loop(now) {
   clock += dt;
   if (state.screen === 'playing') update(dt);
   else if (state.screen === 'over') updateFx(dt);
+  if (deckEditMsgT > 0) deckEditMsgT -= dt;
   render();
 }
 requestAnimationFrame(loop);
@@ -1683,6 +1878,7 @@ canvas.addEventListener('pointerdown', (e) => {
       if (b.id === 'ai') newGame('ai', state.difficulty);
       else if (b.id === 'pvp') newGame('pvp', state.difficulty);
       else if (b.id === 'deck') state.screen = 'deck';
+      else if (b.id === 'deckedit') { deckSel = save.deck.slice(); deckEditScroll = 0; deckEditMsg = ''; deckEditMsgT = 0; state.screen = 'deckedit'; }
       else if (b.id === 'diff0') state.difficulty = 0;
       else if (b.id === 'diff1') state.difficulty = 1;
       else if (b.id === 'resume') restoreMatch(save.match);
@@ -1700,6 +1896,27 @@ canvas.addEventListener('pointerdown', (e) => {
       return;
     }
     deckDrag = { y: p.y, s: deckScroll };   // 拖拽滚动
+    return;
+  }
+  if (state.screen === 'deckedit') {
+    for (const b of ui.deckedit) {
+      if (!inRect(p, b)) continue;
+      if (b.id === 'back') state.screen = 'menu';
+      else if (b.id === 'save') {
+        if (deckSel.length === DECK_SIZE) {
+          save.deck = deckSel.slice();
+          saveGame();
+          AudioSys.upgrade();
+          state.screen = 'menu';
+        } else {
+          deckEditMsg = '需选满 8 张卡才能保存';
+          deckEditMsgT = 1.4;
+          AudioSys.tone(300, 200, 0.15, 'square', 0.3);
+        }
+      } else if (b.id.startsWith('sel:')) deckToggle(b.id.slice(4));
+      return;
+    }
+    deckEditDrag = { y: p.y, s: deckEditScroll };   // 拖拽滚动
     return;
   }
   if (state.screen === 'over') {
@@ -1735,6 +1952,10 @@ window.addEventListener('pointermove', (e) => {
     deckScroll = clamp(deckDrag.s + (deckDrag.y - p.y), 0, deckMaxScroll());
     return;
   }
+  if (state.screen === 'deckedit' && deckEditDrag) {
+    deckEditScroll = clamp(deckEditDrag.s + (deckEditDrag.y - p.y), 0, deckEditMaxScroll());
+    return;
+  }
   const d = drags.get(e.pointerId);
   if (!d) return;
   d.x = p.x; d.y = p.y;
@@ -1742,6 +1963,7 @@ window.addEventListener('pointermove', (e) => {
 });
 window.addEventListener('pointerup', (e) => {
   if (state.screen === 'deck') { deckDrag = null; return; }
+  if (state.screen === 'deckedit') { deckEditDrag = null; return; }
   const d = drags.get(e.pointerId);
   if (!d) return;
   const p = toCanvas(e);
@@ -1758,6 +1980,9 @@ canvas.addEventListener('wheel', (e) => {
   if (state.screen === 'deck') {
     e.preventDefault();
     deckScroll = clamp(deckScroll + e.deltaY, 0, deckMaxScroll());
+  } else if (state.screen === 'deckedit') {
+    e.preventDefault();
+    deckEditScroll = clamp(deckEditScroll + e.deltaY, 0, deckEditMaxScroll());
   }
 }, { passive: false });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
