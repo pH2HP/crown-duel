@@ -1,8 +1,13 @@
 "use strict";
 /* ============================================================
-   皇冠对决 Crown Duel  v3.0
+   皇冠对决 Crown Duel  v3.1
    HTML5 Canvas 塔防卡牌对战（单机 vs AI / 本地双人对战）
    灵感来自《部落冲突：皇室战争》的对战玩法，代码与美术均为原创实现。
+
+   v3.1 更新：
+   - 进度保存系统：对局每 3 秒自动保存，退出后可「继续上次对局」
+   - 生涯战绩统计（总场次 / 胜 / 负 / 平 / 最高奖杯）
+   - 存档导出 / 导入（JSON 文件，换浏览器换设备数据不丢）
 
    v3.0 更新：
    - 卡牌扩充至 62 张（新增 50 张：飞行单位 / 建筑 / 状态法术等）
@@ -155,18 +160,85 @@ function nextArena() {
   return null;
 }
 
-/* ---------------- 存档（奖杯 / 金币 / 卡牌等级） ---------------- */
+/* ---------------- 存档（奖杯 / 金币 / 卡牌等级 / 生涯战绩 / 对局进度） ---------------- */
 const SAVE_KEY = 'crown-duel-save-v1';
+const STATS_DEFAULT = { played: 0, wins: 0, losses: 0, draws: 0, best: 0 };
 let save = loadSave();
 function loadSave() {
   try {
     const d = JSON.parse(localStorage.getItem(SAVE_KEY));
-    if (d && d.v === 1) return { v: 1, trophies: d.trophies || 0, gold: d.gold || 0, levels: d.levels || {} };
+    if (d && d.v === 1) return {
+      v: 1,
+      trophies: d.trophies || 0,
+      gold: d.gold || 0,
+      levels: d.levels || {},
+      stats: { ...STATS_DEFAULT, ...(d.stats || {}) },
+      match: d.match || null,   // 未完成的对局快照，下次启动可继续
+    };
   } catch (e) { /* 首次游玩或存档损坏 */ }
-  return { v: 1, trophies: 0, gold: 0, levels: {} };
+  return { v: 1, trophies: 0, gold: 0, levels: {}, stats: { ...STATS_DEFAULT }, match: null };
 }
 function saveGame() {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* 忽略存储失败 */ }
+}
+/* 存档导入 / 导出（JSON 文件，用于换浏览器或换设备迁移数据） */
+function parseSaveText(text) {
+  try {
+    const d = JSON.parse(text);
+    if (d && d.v === 1) return d;
+  } catch (e) { /* 非法内容 */ }
+  return null;
+}
+function sanitizeLevels(lv) {
+  const out = {};
+  if (lv && typeof lv === 'object') {
+    for (const k of Object.keys(lv)) {
+      if (!DECK.includes(k)) continue;
+      out[k] = clamp(Math.round(Number(lv[k]) || 1), 1, MAX_LV);
+    }
+  }
+  return out;
+}
+function applyImportedSave(d) {
+  if (!d) return false;
+  save = {
+    v: 1,
+    trophies: clamp(Math.round(Number(d.trophies) || 0), 0, 999999),
+    gold: clamp(Math.round(Number(d.gold) || 0), 0, 999999),
+    levels: sanitizeLevels(d.levels),
+    stats: { ...STATS_DEFAULT, ...(d.stats || {}) },
+    match: null,   // 导入后不继承旧对局
+  };
+  saveGame();
+  return true;
+}
+function exportSave() {
+  try {
+    const blob = new Blob([JSON.stringify(save, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'crown-duel-save.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    AudioSys.upgrade();
+  } catch (e) { /* 导出失败时静默 */ }
+}
+function importSave() {
+  try {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = '.json,application/json';
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => {
+        if (applyImportedSave(parseSaveText(String(rd.result)))) AudioSys.upgrade();
+      };
+      rd.readAsText(f);
+    };
+    inp.click();
+  } catch (e) { /* 导入失败时静默 */ }
 }
 const lvOf = (id) => save.levels[id] || 1;
 const mult = (lv) => 1 + (lv - 1) * 0.1;
@@ -364,10 +436,85 @@ function newGame(mode, difficulty) {
     crowns: [0, 0], shake: 0, win: null, reason: '', reward: null,
     arena: arenaOf(), aiLv,
     ai: { t: 1.2 },
+    saveT: 3,   // 对局进度定期保存倒计时
   };
   state.queue = [shuffle(DECK), shuffle(DECK)];
   state.hand = [drawN(state.queue[0], 4), drawN(state.queue[1], 4)];
   drags.clear(); select = null;
+  save.match = null;   // 新开对局清掉旧的未完成对局
+  saveGame();
+}
+
+/* ---------------- 对局进度保存与恢复 ---------------- */
+function serializeMatch() {
+  if (state.screen !== 'playing') return null;
+  return {
+    mode: state.mode, difficulty: state.difficulty,
+    time: state.time, elapsed: state.elapsed, doubleSaid: state.doubleSaid,
+    elixir: state.elixir.slice(), crowns: state.crowns.slice(),
+    hand: [state.hand[0].slice(), state.hand[1].slice()],
+    queue: [state.queue[0].slice(), state.queue[1].slice()],
+    aiLv: state.aiLv, aiT: state.ai.t,
+    towers: state.towers.map(t => ({ id: t.id, team: t.team, kind: t.kind, x: t.x, y: t.y, hp: t.hp, awake: t.awake, cooldown: t.cooldown, dead: t.dead })),
+    units: state.units.map(u => ({ id: u.id, card: u.card.id, team: u.team, x: u.x, y: u.y, lv: u.lv, hp: u.hp, cooldown: u.cooldown, freeze: u.freeze, slowT: u.slowT, slowF: u.slowF, target: u.target ? u.target.id : null })),
+    buildings: state.buildings.map(b => ({ id: b.id, card: b.card.id, team: b.team, x: b.x, y: b.y, lv: b.lv, hp: b.hp, cooldown: b.cooldown, timer: b.timer })),
+    zones: state.zones.map(z => ({ kind: z.kind, team: z.team, x: z.x, y: z.y, r: z.r, life: z.life, total: z.total, dps: z.dps, boost: z.boost, tick: z.tick })),
+    projs: state.projs.map(p => ({ x: p.x, y: p.y, team: p.team, dmg: p.dmg, speed: p.speed, splash: p.splash, target: (p.tx && p.tx.id) || null })),
+    lastUnit: state.lastUnit.map(l => (l ? { card: l.card.id, lv: l.lv } : null)),
+  };
+}
+function restoreMatch(d) {
+  if (!d || !d.mode) return false;
+  const pvp = d.mode === 'pvp';
+  F.top = pvp ? 132 : 0;
+  F.bottom = pvp ? 612 : 565;
+  const cy = (F.top + F.bottom) / 2;
+  F.riverTop = cy - 25; F.riverBot = cy + 25;
+  const towers = d.towers.map(t => {
+    const tw = makeTower(t.team, t.kind, t.x, t.y);
+    tw.id = t.id; tw.hp = t.hp; tw.awake = t.awake; tw.cooldown = t.cooldown; tw.dead = t.dead;
+    return tw;
+  });
+  const units = d.units.filter(u => CARDS[u.card]).map(u => {
+    const un = spawnUnit(CARDS[u.card], u.team, u.x, u.y, u.lv);
+    un.id = u.id; un.hp = u.hp; un.cooldown = u.cooldown; un.freeze = u.freeze; un.slowT = u.slowT; un.slowF = u.slowF;
+    un._targetId = u.target;
+    return un;
+  });
+  const buildings = d.buildings.filter(b => CARDS[b.card]).map(b => {
+    const bb = makeBuilding(CARDS[b.card], b.team, b.x, b.y, b.lv);
+    bb.id = b.id; bb.hp = b.hp; bb.cooldown = b.cooldown; bb.timer = b.timer;
+    return bb;
+  });
+  state = {
+    mode: d.mode, difficulty: d.difficulty, screen: 'playing', over: false,
+    time: d.time, elapsed: d.elapsed, doubleSaid: !!d.doubleSaid,
+    elixir: d.elixir, units, towers, buildings,
+    zones: d.zones.map(z => ({ ...z })),
+    parts: [], texts: [],
+    projs: d.projs.map(p => ({ x: p.x, y: p.y, tx: null, team: p.team, dmg: p.dmg, speed: p.speed, splash: p.splash, dead: false, _targetId: p.target })),
+    crowns: d.crowns, shake: 0, win: null, reason: '', reward: null,
+    arena: arenaOf(), aiLv: d.aiLv,
+    queue: d.queue, hand: d.hand, lastUnit: d.lastUnit,
+    ai: { t: d.aiT || 0 },
+    saveT: 3,
+  };
+  // 重建实体引用（目标 / 箭矢），并保证新实体 id 不与恢复的冲突
+  const byId = {};
+  let maxId = 0;
+  for (const t of state.towers) { byId[t.id] = t; if (t.id > maxId) maxId = t.id; }
+  for (const u of state.units) { byId[u.id] = u; if (u.id > maxId) maxId = u.id; }
+  for (const b of state.buildings) { byId[b.id] = b; if (b.id > maxId) maxId = b.id; }
+  uid = maxId + 1;
+  for (const u of state.units) { u.target = byId[u._targetId] || null; delete u._targetId; }
+  for (const p of state.projs) { p.tx = byId[p._targetId] || null; delete p._targetId; }
+  drags.clear(); select = null;
+  return true;
+}
+function saveMatchNow() {
+  if (state.screen === 'playing') save.match = serializeMatch();
+  else save.match = null;
+  saveGame();
 }
 
 /* ---------------- 特效 ---------------- */
@@ -446,7 +593,7 @@ function endGame(winner, reason) {
     }
   }
   if (state.win === null && winner !== null) state.win = winner;
-  // 奖杯与金币（仅单人模式结算）
+  // 奖杯与金币、生涯战绩（仅单人模式结算）
   if (state.mode === 'ai') {
     let t = 0, g = 0;
     if (state.win === 0) { const hard = state.difficulty === 1; t = hard ? 70 : 50; g = hard ? 100 : 80; }
@@ -455,8 +602,14 @@ function endGame(winner, reason) {
     save.trophies = Math.max(0, save.trophies + t);
     save.gold += g;
     state.reward = { t, g };
-    saveGame();
+    save.stats.played++;
+    if (state.win === 0) save.stats.wins++;
+    else if (state.win === 1) save.stats.losses++;
+    else save.stats.draws++;
+    save.stats.best = Math.max(save.stats.best, save.trophies);
   }
+  save.match = null;   // 对局结束，清除进行中对局快照
+  saveGame();
   if (state.win === 0) AudioSys.win(); else if (state.win === 1) AudioSys.lose();
 }
 
@@ -750,10 +903,14 @@ function castSpell(card, x, y, team, lv) {
     AudioSys.deploy();
     const last = state.lastUnit[team];
     if (last) {
-      const copy = spawnUnit(last.card, team, x, y, last.lv);
-      state.units.push(copy);
-      spawnRing(x, y, team);
-      addText(x, y - 30, '镜像复制!', '#9dffb0', 15);
+      // 存档恢复后 lastUnit 里的 card 是 id 字符串，这里统一转回卡牌对象
+      const lc = typeof last.card === 'string' ? CARDS[last.card] : last.card;
+      if (lc) {
+        const copy = spawnUnit(lc, team, x, y, last.lv);
+        state.units.push(copy);
+        spawnRing(x, y, team);
+        addText(x, y - 30, '镜像复制!', '#9dffb0', 15);
+      }
     }
     return;
   }
@@ -825,6 +982,9 @@ function update(dt) {
   updateZones(dt);
   updateProjs(dt);
   updateFx(dt);
+  // 定期保存对局进度（3 秒一次，退出后可继续）
+  state.saveT -= dt;
+  if (state.saveT <= 0) { state.saveT = 3; saveMatchNow(); }
   if (state.mode === 'ai') aiUpdate(dt);
   if (state.time <= 0) endGame(null, '时间结束');
 }
@@ -1294,22 +1454,24 @@ function drawMenu() {
     ctx.fillStyle = '#ffd94d';
     ctx.fillText('👑 已登顶最高竞技场!', ax + 16, ay + 82);
   }
-  const btns = [
-    { id: 'ai', label: '⚔ 单人挑战', y: 238 },
-    { id: 'pvp', label: '👥 双人对战', y: 298 },
-    { id: 'deck', label: '🃏 卡牌升级', y: 358 },
-  ];
+  const hasMatch = !!save.match;   // 有未完成对局时显示「继续上次对局」
+  const btns = [];
+  if (hasMatch) btns.push({ id: 'resume', label: '▶ 继续上次对局', y: 234, accent: true });
+  btns.push({ id: 'ai', label: '⚔ 单人挑战', y: hasMatch ? 286 : 238 });
+  btns.push({ id: 'pvp', label: '👥 双人对战', y: hasMatch ? 336 : 298 });
+  btns.push({ id: 'deck', label: '🃏 卡牌升级', y: hasMatch ? 386 : 358 });
+  ctx.textAlign = 'center';
   for (const b of btns) {
-    const bw = 260, bh = 50, bx = W / 2 - bw / 2;
+    const bw = 260, bh = b.accent ? 44 : 50, bx = W / 2 - bw / 2;
     rr(bx, b.y, bw, bh, 14);
-    ctx.fillStyle = '#2c3c50'; ctx.fill();
-    ctx.strokeStyle = '#4a5b70'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = b.accent ? '#2e8b4a' : '#2c3c50'; ctx.fill();
+    ctx.strokeStyle = b.accent ? '#5ec878' : '#4a5b70'; ctx.lineWidth = 2; ctx.stroke();
     ctx.font = 'bold 20px "Microsoft YaHei",sans-serif';
-    ctx.fillStyle = '#e8eef7';
+    ctx.fillStyle = b.accent ? '#d8ffe0' : '#e8eef7';
     ctx.fillText(b.label, W / 2, b.y + bh / 2 + 1);
     ui.menu.push({ id: b.id, x: bx, y: b.y, w: bw, h: bh });
   }
-  const dy = 428;
+  const dy = hasMatch ? 440 : 428;
   const diffs = [['简单', 0], ['困难', 1]];
   for (let i = 0; i < 2; i++) {
     const x = W / 2 - 112 + i * 124, w = 100, h = 38;
@@ -1322,15 +1484,32 @@ function drawMenu() {
     ctx.fillText(diffs[i][0] + (i === 0 ? ' +50🏆' : ' +70🏆'), x + w / 2, dy + h / 2 + 1);
     ui.menu.push({ id: 'diff' + diffs[i][1], x, y: dy, w, h });
   }
+  // 生涯战绩
+  const st = save.stats || {};
   ctx.textAlign = 'center';
   ctx.font = '12px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle = '#8fa3c0';
+  ctx.fillText('📊 总场次 ' + (st.played || 0) + ' · 胜 ' + (st.wins || 0) + ' · 负 ' + (st.losses || 0) + ' · 平 ' + (st.draws || 0) + ' · 最高 🏆' + (st.best || save.trophies || 0), W / 2, hasMatch ? 496 : 484);
+  // 存档导入 / 导出
+  const eb = [{ id: 'export', label: '📤 导出存档', x: 30 }, { id: 'import', label: '📥 导入存档', x: 220 }];
+  for (const b of eb) {
+    rr(b.x, 608, 170, 36, 10);
+    ctx.fillStyle = '#2a3a4e'; ctx.fill();
+    ctx.strokeStyle = '#4a5b70'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.font = '13px "Microsoft YaHei",sans-serif';
+    ctx.fillStyle = '#e8eef7';
+    ctx.fillText(b.label, b.x + 85, 626);
+    ui.menu.push({ id: b.id, x: b.x, y: 608, w: 170, h: 36 });
+  }
+  ctx.font = '12px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#6f829c';
-  ctx.fillText('拖拽卡牌到己方半场部署 · 3 分钟内率先摧毁敌方国王塔者获胜', W / 2, 512);
-  ctx.fillText('62 张卡牌 · 单位 / 建筑 / 法术 · 牌库可滚动浏览', W / 2, 532);
-  ctx.fillText('双人模式：上方红方 vs 下方蓝方 · 支持多点触控', W / 2, 552);
+  const hy = hasMatch ? 520 : 512;
+  ctx.fillText('拖拽卡牌到己方半场部署 · 3 分钟内率先摧毁敌方国王塔者获胜', W / 2, hy);
+  ctx.fillText('62 张卡牌 · 单位 / 建筑 / 法术 · 牌库可滚动浏览', W / 2, hy + 20);
+  ctx.fillText('双人模式：上方红方 vs 下方蓝方 · 支持多点触控', W / 2, hy + 40);
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#54687e';
-  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.0', W / 2, H - 24);
+  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.1', W / 2, H - 24);
 }
 function deckMaxScroll() {
   const ch = 100, gy = 8, y0 = 84;
@@ -1506,6 +1685,9 @@ canvas.addEventListener('pointerdown', (e) => {
       else if (b.id === 'deck') state.screen = 'deck';
       else if (b.id === 'diff0') state.difficulty = 0;
       else if (b.id === 'diff1') state.difficulty = 1;
+      else if (b.id === 'resume') restoreMatch(save.match);
+      else if (b.id === 'export') exportSave();
+      else if (b.id === 'import') importSave();
       return;
     }
     return;
@@ -1569,6 +1751,9 @@ window.addEventListener('pointerup', (e) => {
   drags.delete(e.pointerId);   // 未移动的点击保留 select，走点选部署流程
 });
 window.addEventListener('pointercancel', (e) => { drags.delete(e.pointerId); });
+/* 关闭 / 切走页面前保存对局进度 */
+window.addEventListener('pagehide', saveMatchNow);
+window.addEventListener('beforeunload', saveMatchNow);
 canvas.addEventListener('wheel', (e) => {
   if (state.screen === 'deck') {
     e.preventDefault();
