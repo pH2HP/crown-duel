@@ -1711,6 +1711,8 @@ function drawDeckEdit() {
   ctx.fillStyle = '#e8eef7';
   ctx.fillText('← 返回', bx + bw / 2, by + bh / 2 + 1);
   ui.deckedit.push({ id: 'back', x: bx, y: by, w: bw, h: bh });
+  // 保存按钮命中区先注册（绘制仍在网格之后），避免点到被按钮遮挡的卡牌
+  ui.deckedit.push({ id: 'save', x: 30, y: H - 60, w: W - 60, h: 46 });
   // 滚动网格（2 列 × N 行），点卡片加入 / 移出卡组
   const cw = 172, ch = 86, gx = 16, gy = 8, y0 = 84;
   const maxScroll = deckEditMaxScroll();
@@ -1722,7 +1724,7 @@ function drawDeckEdit() {
     const sel = deckSel.includes(id);
     const cx = 30 + (i % 2) * (cw + gx);
     const cy = y0 + Math.floor(i / 2) * (ch + gy) - deckEditScroll;
-    if (cy + ch < y0 || cy > gridBottom) continue;   // 视口外跳过
+    if (cy + ch < y0 || cy + ch > gridBottom) continue;   // 视口外或会压到保存按钮的格子跳过
     rr(cx, cy, cw, ch, 12);
     ctx.fillStyle = sel ? '#1e3a2e' : '#1c2a3e'; ctx.fill();
     ctx.strokeStyle = sel ? '#5ec878' : '#40556e'; ctx.lineWidth = sel ? 2.5 : 1.5; ctx.stroke();
@@ -1778,7 +1780,6 @@ function drawDeckEdit() {
   ctx.font = 'bold 18px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = ok ? '#d8ffe0' : '#6f829c';
   ctx.fillText(ok ? '💾 保存卡组' : '需选满 8 张（当前 ' + deckSel.length + '）', W / 2, sy + sh / 2 + 1);
-  ui.deckedit.push({ id: 'save', x: sx, y: sy, w: sw, h: sh });
   // 提示
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   if (deckEditMsgT > 0) {
