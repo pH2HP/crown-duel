@@ -196,10 +196,11 @@ function loadSave() {
       levels: d.levels || {},
       stats: { ...STATS_DEFAULT, ...(d.stats || {}) },
       match: d.match || null,   // 未完成的对局快照，下次启动可继续
-      deck: normalizeDeck(d.deck),   // 出战的 8 张卡组
+      deck: normalizeDeck(d.deck),   // 我方的 8 张卡组
+      deck2: normalizeDeck(d.deck2), // 对方（双人模式玩家2）的 8 张卡组
     };
   } catch (e) { /* 首次游玩或存档损坏 */ }
-  return { v: 1, trophies: 0, gold: 0, levels: {}, stats: { ...STATS_DEFAULT }, match: null, deck: normalizeDeck(null) };
+  return { v: 1, trophies: 0, gold: 0, levels: {}, stats: { ...STATS_DEFAULT }, match: null, deck: normalizeDeck(null), deck2: normalizeDeck(null) };
 }
 function saveGame() {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* 忽略存储失败 */ }
@@ -232,6 +233,7 @@ function applyImportedSave(d) {
     stats: { ...STATS_DEFAULT, ...(d.stats || {}) },
     match: null,   // 导入后不继承旧对局
     deck: normalizeDeck(d.deck),
+    deck2: normalizeDeck(d.deck2),
   };
   saveGame();
   return true;
@@ -390,6 +392,7 @@ let clock = 0;              // 全局动画时钟
 let deckScroll = 0;         // 牌库滚动
 let deckDrag = null;        // 牌库拖拽滚动状态 { y, s }
 let deckSel = null;         // 卡组编辑中已选卡牌（进入编辑界面时从存档载入）
+let deckEditTeam = 0;       // 正在编辑哪一方的卡组（0 我方 / 1 对方，仅双人模式有意义）
 let deckEditScroll = 0;     // 卡组编辑滚动
 let deckEditDrag = null;    // 卡组编辑拖拽滚动状态 { y, s }
 let deckEditMsg = '';       // 卡组编辑提示
@@ -451,9 +454,9 @@ function newGame(mode, difficulty) {
   F.bottom = pvp ? 612 : 565;
   const cy = (F.top + F.bottom) / 2;
   F.riverTop = cy - 25; F.riverBot = cy + 25;
-  // 卡组：我方用保存的卡组；AI 每局随机 8 张；双人模式双方共用我方卡组
+  // 卡组：我方用保存的卡组；AI 每局随机 8 张；双人模式双方各自用保存的卡组
   const deck0 = normalizeDeck(save.deck);
-  const deck1 = mode === 'pvp' ? deck0.slice() : randomAiDeck();
+  const deck1 = mode === 'pvp' ? normalizeDeck(save.deck2) : randomAiDeck();
   const aiLv = clamp(Math.round(deck0.reduce((s, id) => s + lvOf(id), 0) / deck0.length), 1, MAX_LV);
   state = {
     mode, difficulty, screen: 'playing', over: false,
@@ -1002,8 +1005,16 @@ function canDeploy(id, x, y, team) {
   if (state.elixir[team] < card.cost) return false;
   if (x < 18 || x > W - 18) return false;
   if (card.type === 'spell') { if (y < F.top + 26 || y > F.bottom - 14) return false; }
-  else if (team === 0) { if (y < F.riverBot - 12 || y > F.bottom - 22) return false; }
-  else { if (y > F.riverTop + 12 || y < F.top + 30) return false; }
+  else {
+    const own = team === 0 ? (y >= F.riverBot - 12 && y <= F.bottom - 22) : (y <= F.riverTop + 12 && y >= F.top + 30);
+    if (!own) {
+      // 拆掉敌方一座塔后，可在该塔所在边路把卡部署到敌方半场（中路仍需先拆两侧塔，国王塔摧毁即结束）
+      const far = team === 0 ? (y >= F.top + 30 && y <= F.riverTop + 12) : (y <= F.bottom - 22 && y >= F.riverBot - 12);
+      const laneOpen = (l) => state.towers.some(tw => tw.dead && tw.team !== team && tw.kind === 'guard' && ((l === 'L' && tw.x < 140) || (l === 'R' && tw.x > 280)));
+      const lane = x < 140 ? 'L' : x > 280 ? 'R' : 'M';
+      if (!far || (lane === 'M' ? !(laneOpen('L') && laneOpen('R')) : !laneOpen(lane))) return false;
+    }
+  }
   for (const tw of state.towers) if (!tw.dead && tw.team === team && dist2(tw.x, tw.y, x, y) < tw.r + 16) return false;
   return true;
 }
@@ -1576,11 +1587,11 @@ function drawMenu() {
   ctx.font = '12px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#6f829c';
   const hy = hasMatch ? 566 : 512;
-  ctx.fillText('拖拽卡牌到己方半场部署 · 3 分钟内率先摧毁敌方国王塔者获胜', W / 2, hy);
+  ctx.fillText('拖拽卡牌到己方半场部署 · 拆掉敌方塔可扩大部署范围', W / 2, hy);
   ctx.fillText('地面单位只能从桥过河 · 飞行单位可任意飞越', W / 2, hy + 20);
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#54687e';
-  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.2', W / 2, H - 24);
+  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.3', W / 2, H - 24);
 }
 function deckMaxScroll() {
   const ch = 100, gy = 8, y0 = 84;
@@ -1696,7 +1707,7 @@ function drawDeckEdit() {
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.font = 'bold 22px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#ffd94d';
-  ctx.fillText('🎴 选择卡组（出战 8 张）', 20, 32);
+  ctx.fillText('🎴 选择卡组（' + (deckEditTeam === 0 ? '我方' : '对方') + ' · 出战 8 张）', 20, 32);
   const ok = deckSel.length === DECK_SIZE;
   ctx.textAlign = 'right';
   ctx.font = 'bold 16px "Microsoft YaHei",sans-serif';
@@ -1711,6 +1722,18 @@ function drawDeckEdit() {
   ctx.fillStyle = '#e8eef7';
   ctx.fillText('← 返回', bx + bw / 2, by + bh / 2 + 1);
   ui.deckedit.push({ id: 'back', x: bx, y: by, w: bw, h: bh });
+  // 我方 / 对方卡组切换（双人模式双方卡组独立）
+  for (const t of [0, 1]) {
+    const tx = W / 2 - 100 + t * 105, tw = 95, th = 30, ty = by;
+    rr(tx, ty, tw, th, 15);
+    ctx.fillStyle = deckEditTeam === t ? '#2e8b4a' : '#2a3a4e'; ctx.fill();
+    ctx.strokeStyle = deckEditTeam === t ? '#5ec878' : '#4a5b70'; ctx.lineWidth = deckEditTeam === t ? 2 : 1.5; ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.font = '13px "Microsoft YaHei",sans-serif';
+    ctx.fillStyle = deckEditTeam === t ? '#d8ffe0' : '#e8eef7';
+    ctx.fillText((t === 0 ? '🟦 我方' : '🟥 对方'), tx + tw / 2, ty + th / 2 + 1);
+    ui.deckedit.push({ id: 'tab' + t, x: tx, y: ty, w: tw, h: th });
+  }
   // 保存按钮命中区先注册（绘制仍在网格之后），避免点到被按钮遮挡的卡牌
   ui.deckedit.push({ id: 'save', x: 30, y: H - 60, w: W - 60, h: 46 });
   // 滚动网格（2 列 × N 行），点卡片加入 / 移出卡组
@@ -1779,7 +1802,7 @@ function drawDeckEdit() {
   ctx.textAlign = 'center';
   ctx.font = 'bold 18px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = ok ? '#d8ffe0' : '#6f829c';
-  ctx.fillText(ok ? '💾 保存卡组' : '需选满 8 张（当前 ' + deckSel.length + '）', W / 2, sy + sh / 2 + 1);
+  ctx.fillText(ok ? '💾 保存' + (deckEditTeam === 0 ? '我方' : '对方') + '卡组' : '需选满 8 张（当前 ' + deckSel.length + '）', W / 2, sy + sh / 2 + 1);
   // 提示
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   if (deckEditMsgT > 0) {
@@ -1787,7 +1810,7 @@ function drawDeckEdit() {
     ctx.fillText(deckEditMsg, W / 2, sy - 26);
   } else {
     ctx.fillStyle = '#54687e';
-    ctx.fillText('点击卡牌加入 / 移出卡组 · 对局中双方各携带 8 张卡', W / 2, sy - 26);
+    ctx.fillText('顶部切换 我方 / 对方卡组 · 双人模式双方卡组各自独立', W / 2, sy - 26);
   }
 }
 function drawOver() {
@@ -1879,7 +1902,7 @@ canvas.addEventListener('pointerdown', (e) => {
       if (b.id === 'ai') newGame('ai', state.difficulty);
       else if (b.id === 'pvp') newGame('pvp', state.difficulty);
       else if (b.id === 'deck') state.screen = 'deck';
-      else if (b.id === 'deckedit') { deckSel = save.deck.slice(); deckEditScroll = 0; deckEditMsg = ''; deckEditMsgT = 0; state.screen = 'deckedit'; }
+      else if (b.id === 'deckedit') { deckSel = save.deck.slice(); deckEditTeam = 0; deckEditScroll = 0; deckEditMsg = ''; deckEditMsgT = 0; state.screen = 'deckedit'; }
       else if (b.id === 'diff0') state.difficulty = 0;
       else if (b.id === 'diff1') state.difficulty = 1;
       else if (b.id === 'resume') restoreMatch(save.match);
@@ -1903,9 +1926,18 @@ canvas.addEventListener('pointerdown', (e) => {
     for (const b of ui.deckedit) {
       if (!inRect(p, b)) continue;
       if (b.id === 'back') state.screen = 'menu';
+      else if (b.id === 'tab0' || b.id === 'tab1') {
+        const nt = b.id === 'tab0' ? 0 : 1;
+        if (nt !== deckEditTeam) {
+          deckEditTeam = nt;
+          deckSel = (nt === 0 ? save.deck : save.deck2).slice();
+          deckEditScroll = 0; deckEditMsg = ''; deckEditMsgT = 0;
+        }
+      }
       else if (b.id === 'save') {
         if (deckSel.length === DECK_SIZE) {
-          save.deck = deckSel.slice();
+          if (deckEditTeam === 0) save.deck = deckSel.slice();
+          else save.deck2 = deckSel.slice();
           saveGame();
           AudioSys.upgrade();
           state.screen = 'menu';
