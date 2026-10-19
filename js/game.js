@@ -1,8 +1,18 @@
 "use strict";
 /* ============================================================
-   皇冠对决 Crown Duel  v3.6
+   皇冠对决 Crown Duel  v3.7
    HTML5 Canvas 塔防卡牌对战（单机 vs AI / 本地双人对战）
    灵感来自《部落冲突：皇室战争》的对战玩法，代码与美术均为原创实现。
+
+   v3.7 更新：
+   - 击退机制：火球 / 火箭 / 流星火雨爆炸击退，滚木横向击退，雪球小幅击退
+   - 索敌规则：优先攻击最近目标；锁定后不换目标，只有目标死亡或攻击被打断（冰冻/击退）才转换
+   - 冰冻强化：冻住敌方单位、塔与建筑并打断其攻击，时长 3 秒，冻结有冰霜特效
+   - 寒冰法师 / 冰石人攻击附带减速，被减速单位带 ❄ 标记
+   - 全局单位移速放缓 15%，节奏更清晰
+   - 难度差距拉大：AI 等级 ×0.75～×1.55、圣水速率 0.8～1.2 倍、高难度开局圣水更多
+   - 宝箱改为点击开启：获得金币 + 随机卡牌免费升 1 级（不重复出同一张卡，且避开上一箱的卡）
+   - 主菜单底部文字行重新排布，不再互相压着
 
    v3.6 更新：
    - 摧毁国王塔时其所有防御塔一并倒塌，胜方获得 3 皇冠
@@ -44,6 +54,7 @@ const CHESTS = [
 const MAX_LV = 9;                          // 卡牌最高等级
 const BRIDGE_X = W / 2;                    // 桥的位置
 const BRIDGE_HALF = 55;                    // 桥的半宽（地面单位只能从桥上过河）
+const SPD_MUL = 0.85;                      // 全局单位移速系数（v3.7 整体放缓节奏）
 const F = { top: 0, bottom: 565, riverTop: 252, riverBot: 302 };   // 战场几何（每局按模式计算）
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -74,7 +85,7 @@ const CARD_DEFS = [
   ['giant',       '巨人',       '🗿',  5, 'unit',     2800, 110, 1.7, 28,  33,  'buildings', 21, null],
   ['pyromancer',  '火法师',     '🧙',  4, 'unit',     500,  125, 1.4, 105, 50,  'any', 13, { splash: 58 }],
   ['guard',       '王冠守卫',   '🛡️', 4, 'unit',     1500, 165, 1.6, 24,  42,  'any', 16, null],
-  ['fireball',    '火球术',     '💥',  4, 'spell',    0,    310, 0,   0,   0,   'any', 0,  { radius: 72, towerFactor: 0.55 }],
+  ['fireball',    '火球术',     '💥',  4, 'spell',    0,    310, 0,   0,   0,   'any', 0,  { radius: 72, towerFactor: 0.55, knock: 70 }],
   ['arrows',      '箭雨',       '🌧️', 3, 'spell',    0,    105, 0,   0,   0,   'any', 0,  { radius: 95, towerFactor: 0.4 }],
   ['heal',        '治疗术',     '💚',  3, 'spell',    0,    180, 0,   0,   0,   'any', 0,  { radius: 90 }],
   // —— 新增近战 / 地面单位 ——
@@ -97,7 +108,7 @@ const CARD_DEFS = [
   // —— 远程 / 飞行单位 ——
   ['musketeer',    '火枪手',       '🔫',  4, 'unit', 420,  150, 1.5, 150, 55,  'any', 12, null],
   ['wizard',       '法师',         '🔮',  4, 'unit', 520,  135, 1.4, 105, 50,  'any', 13, { splash: 50 }],
-  ['iceWizard',    '寒冰法师',     '🥶',  3, 'unit', 400,  75,  1.6, 100, 50,  'any', 12, { slow: { t: 1.2, f: 0.55 } }],
+  ['iceWizard',    '寒冰法师',     '🥶',  3, 'unit', 400,  75,  1.6, 100, 50,  'any', 12, { slow: { t: 2, f: 0.5 } }],
   ['knightArcher', '骑射手',       '🏇',  4, 'unit', 500,  85,  1.3, 110, 80,  'any', 13, null],
   ['babyDragon',   '飞龙宝宝',     '🐲',  4, 'unit', 800,  110, 1.5, 85,  65,  'any', 16, { fly: true, splash: 45 }],
   ['minions',      '亡灵',         '👻',  3, 'unit', 150,  60,  1.1, 22,  88,  'any', 10, { count: 3, fly: true }],
@@ -122,15 +133,15 @@ const CARD_DEFS = [
   ['tombstone',   '骷髅墓碑',     '🪦',  3, 'building', 1000, 0,   0,    0,   0, 'any', 16, { building: { kind: 'spawner', interval: 4.5, max: 3, spawn: 'skeleton' }, size: 1 }],
   ['elixirPump',  '圣水泵',       '🫗',  5, 'building', 1500, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 }, size: 2 }],
   // —— 法术 ——
-  ['freeze',       '冰冻术',   '🧊',  4, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 95, freeze: 2.2 }],
+  ['freeze',       '冰冻术',   '🧊',  4, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 95, freeze: 3 }],
   ['poison',       '毒药',     '☠️', 4, 'spell', 0, 42,  0, 0, 0, 'any', 0, { radius: 95, zone: 'poison', duration: 6 }],
   ['rage',         '狂暴术',   '🔥',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 110, zone: 'rage', duration: 5, boost: 1.4 }],
-  ['log',          '滚木',     '🪵',  2, 'spell', 0, 180, 0, 0, 0, 'any', 0, { radius: 85, logRange: 170, width: 55 }],
+  ['log',          '滚木',     '🪵',  2, 'spell', 0, 180, 0, 0, 0, 'any', 0, { radius: 85, logRange: 170, width: 55, knock: 60 }],
   ['lightning',    '雷电术',   '🌩️', 4, 'spell', 0, 260, 0, 0, 0, 'any', 0, { radius: 130, strikes: 3, towerFactor: 0.35 }],
-  ['rocket',       '火箭',     '🚀',  5, 'spell', 0, 700, 0, 0, 0, 'any', 0, { radius: 45, towerFactor: 0.4 }],
+  ['rocket',       '火箭',     '🚀',  5, 'spell', 0, 700, 0, 0, 0, 'any', 0, { radius: 45, towerFactor: 0.4, knock: 120 }],
   ['earthquake',   '地震',     '🌋',  3, 'spell', 0, 250, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 2.2, buildingFactor: 1.5, unitFactor: 0.35 }],
-  ['snowBall',     '雪球',     '❄️', 2, 'spell', 0, 90,  0, 0, 0, 'any', 0, { radius: 60, slow: { t: 1.0, f: 0.55 } }],
-  ['meteorShower', '流星火雨', '💫',  6, 'spell', 0, 380, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 0.5 }],
+  ['snowBall',     '雪球',     '❄️', 2, 'spell', 0, 90,  0, 0, 0, 'any', 0, { radius: 60, slow: { t: 1.5, f: 0.5 }, knock: 45 }],
+  ['meteorShower', '流星火雨', '💫',  6, 'spell', 0, 380, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 0.5, knock: 90 }],
   ['mirror',       '镜像术',   '🪞',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 60 }],
 ];
 /* 卡牌解锁：达到对应奖杯阶段解锁（未列出 = 0，新手训练场可用） */
@@ -228,9 +239,11 @@ function loadSave() {
       deck: normalizeDeck(d.deck),   // 我方的 8 张卡组
       deck2: normalizeDeck(d.deck2), // 对方（双人模式玩家2）的 8 张卡组
       chests: Array.isArray(d.chests) ? d.chests.filter(n => typeof n === 'number') : [],   // 已开启的奖杯宝箱
+      pendingChests: Array.isArray(d.pendingChests) ? d.pendingChests.filter(n => typeof n === 'number') : [],   // 已达标待开启的宝箱
+      lastChestCards: Array.isArray(d.lastChestCards) ? d.lastChestCards.filter(id => CARDS[id]) : [],   // 上一箱开出的卡（下一箱避开）
     };
   } catch (e) { /* 首次游玩或存档损坏 */ }
-  return { v: 1, trophies: 0, gold: 0, levels: {}, stats: { ...STATS_DEFAULT }, match: null, deck: normalizeDeck(null), deck2: normalizeDeck(null), chests: [] };
+  return { v: 1, trophies: 0, gold: 0, levels: {}, stats: { ...STATS_DEFAULT }, match: null, deck: normalizeDeck(null), deck2: normalizeDeck(null), chests: [], pendingChests: [], lastChestCards: [] };
 }
 function saveGame() {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* 忽略存储失败 */ }
@@ -265,6 +278,8 @@ function applyImportedSave(d) {
     deck: normalizeDeck(d.deck),
     deck2: normalizeDeck(d.deck2),
     chests: Array.isArray(d.chests) ? d.chests.filter(n => typeof n === 'number') : [],
+    pendingChests: Array.isArray(d.pendingChests) ? d.pendingChests.filter(n => typeof n === 'number') : [],
+    lastChestCards: Array.isArray(d.lastChestCards) ? d.lastChestCards.filter(id => CARDS[id]) : [],
   };
   saveGame();
   return true;
@@ -567,12 +582,12 @@ function newGame(mode, difficulty) {
   // 卡组：我方用保存的卡组；AI 每局随机 8 张；双人模式双方各自用保存的卡组
   const deck0 = normalizeDeck(save.deck);
   const deck1 = mode === 'pvp' ? normalizeDeck(save.deck2) : randomAiDeck();
-  // AI 等级随难度提高：简单 ×0.9 → 无双 ×1.5
-  const aiLv = clamp(Math.round(deck0.reduce((s, id) => s + lvOf(id), 0) / deck0.length * (0.9 + difficulty * 0.06)), 1, MAX_LV);
+  // AI 等级随难度提高：简单 ×0.75 → 无双 ×1.55（差距拉开，档位感明显）
+  const aiLv = clamp(Math.round(deck0.reduce((s, id) => s + lvOf(id), 0) / deck0.length * (0.75 + difficulty * 0.08)), 1, MAX_LV);
   state = {
     mode, difficulty, screen: 'playing', over: false,
     time: MATCH_TIME, elapsed: 0, doubleSaid: false,
-    elixir: [ELIXIR_START, ELIXIR_START],
+    elixir: [ELIXIR_START, pvp ? ELIXIR_START : Math.min(ELIXIR_MAX, ELIXIR_START + Math.round(difficulty * 0.3))],   // 高难度 AI 开局圣水更多
     units: [], projs: [], parts: [], texts: [],
     buildings: [], zones: [], lastUnit: [null, null],
     towers: [
@@ -604,7 +619,7 @@ function serializeMatch() {
     decks: [state.decks[0].slice(), state.decks[1].slice()],
     aiLv: state.aiLv, aiT: state.ai.t,
     towers: state.towers.map(t => ({ id: t.id, team: t.team, kind: t.kind, x: t.x, y: t.y, hp: t.hp, awake: t.awake, cooldown: t.cooldown, dead: t.dead })),
-    units: state.units.map(u => ({ id: u.id, card: u.card.id, team: u.team, x: u.x, y: u.y, lv: u.lv, hp: u.hp, cooldown: u.cooldown, freeze: u.freeze, slowT: u.slowT, slowF: u.slowF, target: u.target ? u.target.id : null })),
+    units: state.units.map(u => ({ id: u.id, card: u.card.id, team: u.team, x: u.x, y: u.y, lv: u.lv, hp: u.hp, cooldown: u.cooldown, freeze: u.freeze, knockT: u.knockT, slowT: u.slowT, slowF: u.slowF, target: u.target ? u.target.id : null })),
     buildings: state.buildings.map(b => ({ id: b.id, card: b.card.id, team: b.team, x: b.x, y: b.y, lv: b.lv, hp: b.hp, cooldown: b.cooldown, timer: b.timer })),
     zones: state.zones.map(z => ({ kind: z.kind, team: z.team, x: z.x, y: z.y, r: z.r, life: z.life, total: z.total, dps: z.dps, boost: z.boost, tick: z.tick })),
     projs: state.projs.map(p => ({ x: p.x, y: p.y, team: p.team, dmg: p.dmg, speed: p.speed, splash: p.splash, target: (p.tx && p.tx.id) || null })),
@@ -762,10 +777,10 @@ function endGame(winner, reason) {
     save.trophies = Math.max(0, save.trophies + t);
     save.gold += g;
     state.reward = { t, g };
-    // 奖杯宝箱：首次达到对应奖杯阶段自动开启
+    // 奖杯宝箱：首次达到对应奖杯阶段进入待开启队列（结算界面点击开启）
     const chests = [];
-    for (const c of CHESTS) if (save.trophies >= c.at && !save.chests.includes(c.at)) { save.chests.push(c.at); save.gold += c.gold; chests.push(c); }
-    if (chests.length) state.reward.chests = chests;
+    for (const c of CHESTS) if (save.trophies >= c.at && !save.chests.includes(c.at) && !save.pendingChests.includes(c.at)) { save.pendingChests.push(c.at); chests.push(c.at); }
+    if (chests.length) state.reward.pending = chests;
     save.stats.played++;
     if (state.win === 0) save.stats.wins++;
     else if (state.win === 1) save.stats.losses++;
@@ -775,6 +790,29 @@ function endGame(winner, reason) {
   save.match = null;   // 对局结束，清除进行中对局快照
   saveGame();
   if (state.win === 0) AudioSys.win(); else if (state.win === 1) AudioSys.lose();
+}
+// 开启宝箱：获得金币 + 随机卡牌免费升 1 级（不重复刷出同一张卡，且避开上一箱开过的卡）
+function chestOpen(m) {
+  const c = CHESTS.find(x => x.at === m);
+  if (!c || !save.pendingChests.includes(m)) return false;
+  save.pendingChests = save.pendingChests.filter(x => x !== m);
+  save.chests.push(m);
+  save.gold += c.gold;
+  const pool = DECK.filter(id => unlocked(id) && !save.lastChestCards.includes(id) && lvOf(id) < MAX_LV);
+  const n = Math.min(1 + Math.floor(m / 600), 4, pool.length);   // 越高级的宝箱开出的卡越多
+  const cards = [];
+  for (let i = 0; i < n && pool.length; i++) {
+    const id = pool[Math.floor(Math.random() * pool.length)];
+    pool.splice(pool.indexOf(id), 1);
+    cards.push(id);
+    save.levels[id] = (save.levels[id] || 1) + 1;
+  }
+  save.lastChestCards = cards.slice();
+  state.reward.chestResult = { name: c.name, gold: c.gold, cards };
+  AudioSys.upgrade();
+  for (let i = 0; i < 20; i++) state.parts.push({ x: W / 2 + rand(-60, 60), y: 320 + rand(-40, 40), vx: rand(-60, 60), vy: rand(-140, -40), g: 260, life: rand(0.4, 0.8), r: rand(2, 4), col: pick(['#ffd94d', '#ffb74d', '#fff2b0']) });
+  saveGame();
+  return true;
 }
 
 /* ---------------- 单位 ---------------- */
@@ -830,25 +868,48 @@ function doAttack(u, t) {
     else if (t.isBuilding) damageBuilding(t, u.dmg);
     else damageUnit(t, u.dmg);
   }
-  // 攻击附带减速（寒冰法师 / 冰石人 / 雪球）
+  // 攻击附带减速（寒冰法师 / 冰石人）
   if (u.card.slow && t.isUnit) { t.slowT = u.card.slow.t; t.slowF = u.card.slow.f; }
+}
+// 击退：沿远离爆炸中心方向推开；攻击被打断，需重新索敌
+function knockback(u, x, y, k) {
+  const d = dist2(u.x, u.y, x, y);
+  if (d < 0.01) u.y += u.team === 0 ? k : -k;
+  else { u.x += (u.x - x) / d * k; u.y += (u.y - y) / d * k; }
+  u.knockT = 0.25;
+  u.target = null;
 }
 function updateUnits(dt) {
   const units = state.units;
   for (let i = units.length - 1; i >= 0; i--) {
     const u = units[i];
     if (u.dead) { units.splice(i, 1); continue; }
-    // 冰冻：完全停住
-    if (u.freeze > 0) { u.freeze -= dt; continue; }
+    // 冰冻：完全停住（攻击被打断，解冻后重新索敌）
+    if (u.freeze > 0) {
+      u.freeze -= dt;
+      u.target = null;
+      continue;
+    }
+    // 击退硬直：短暂失控，之后重新索敌
+    if (u.knockT > 0) {
+      u.knockT -= dt;
+      u.target = null;
+      u.x = clamp(u.x, 16, W - 16);
+      u.y = clamp(u.y, F.top + 14, F.bottom - 14);
+      if (!u.card.fly && u.y > F.riverTop && u.y < F.riverBot && Math.abs(u.x - BRIDGE_X) > BRIDGE_HALF) {
+        u.y = u.team === 0 ? F.riverBot : F.riverTop;
+      }
+      continue;
+    }
     const px = u.x;
     u.cooldown -= dt;
     u.lunge = Math.max(0, u.lunge - dt * 3.2);
     u.slowT = Math.max(0, u.slowT - dt);
-    if (!u.target || u.target.dead) u.target = findTarget(u);
+    if (!u.target || u.target.dead) u.target = findTarget(u);   // 锁定后不换目标：只有目标死亡或攻击被打断才重新索敌
     const t = u.target;
     // 狂暴区域内加速
     const rz = state.zones.find(z => z.kind === 'rage' && z.team === u.team && dist2(u.x, u.y, z.x, z.y) < z.r);
-    const spd = u.speed * (u.slowT > 0 ? u.slowF : 1) * (rz ? rz.boost : 1);
+    const spd = u.speed * SPD_MUL * (u.slowT > 0 ? u.slowF : 1) * (rz ? rz.boost : 1);
     if (!t) {
       // 无目标：向敌方推进；地面单位过河同样走桥
       if (u.card.fly) {
@@ -928,6 +989,7 @@ function riverWaypoint(u, t) {
 function updateTowers(dt) {
   for (const tw of state.towers) {
     if (tw.dead) continue;
+    if (tw.freeze > 0) { tw.freeze -= dt; continue; }   // 被冰冻的塔停止攻击
     tw.cooldown -= dt;
     // 国王塔激活判定：敌方单位过河后参战
     if (tw.kind === 'king' && !tw.awake) {
@@ -980,6 +1042,7 @@ function updateProjs(dt) {
 function updateBuildings(dt) {
   for (const b of state.buildings) {
     if (b.dead) continue;
+    if (b.freeze > 0) { b.freeze -= dt; continue; }   // 被冰冻的建筑停止工作
     if (b.kind === 'shooter') {
       b.cooldown -= dt;
       if (b.cooldown > 0) continue;
@@ -1052,10 +1115,13 @@ function castSpell(card, x, y, team, lv) {
   if (id === 'freeze') {
     AudioSys.tone(900, 300, 0.3, 'sine', 0.5);
     for (let i = 0; i < 18; i++) state.parts.push({ x: x + rand(-card.radius, card.radius), y: y + rand(-card.radius, card.radius), vx: 0, vy: 0, g: 0, life: rand(0.4, 0.8), r: rand(2, 4), col: pick(['#bfe8ff', '#7fd4ff', '#ffffff']) });
+    // 冻住单位（打断其攻击）与敌方塔、建筑
     for (const u of state.units) {
       if (u.dead || u.team === team) continue;
-      if (dist2(u.x, u.y, x, y) < card.radius + u.r) u.freeze = card.freeze;
+      if (dist2(u.x, u.y, x, y) < card.radius + u.r) { u.freeze = card.freeze; u.target = null; }
     }
+    for (const tw of state.towers) if (!tw.dead && tw.team !== team && dist2(tw.x, tw.y, x, y) < card.radius + tw.r) tw.freeze = card.freeze;
+    for (const b of state.buildings) if (!b.dead && b.team !== team && dist2(b.x, b.y, x, y) < card.radius + b.r) b.freeze = card.freeze;
     return;
   }
   if (id === 'poison' || id === 'rage') {
@@ -1073,7 +1139,10 @@ function castSpell(card, x, y, team, lv) {
     for (let i = 0; i < 20; i++) state.parts.push({ x: x + rand(-card.logRange, card.logRange), y: y + rand(-card.width, card.width), vx: 0, vy: rand(-40, 40), g: 0, life: 0.4, r: rand(2, 4), col: '#a9743f' });
     for (const u of state.units) {
       if (u.dead || u.team === team) continue;
-      if (Math.abs(u.x - x) <= card.logRange && Math.abs(u.y - y) <= card.width) damageUnit(u, dmg);
+      if (Math.abs(u.x - x) <= card.logRange && Math.abs(u.y - y) <= card.width) {
+        damageUnit(u, dmg);
+        if (card.knock) { u.x += (u.x >= x ? 1 : -1) * card.knock; u.knockT = 0.25; u.target = null; }   // 滚木横向击退
+      }
     }
     for (const b of state.buildings) {
       if (b.dead || b.team === team) continue;
@@ -1115,6 +1184,7 @@ function castSpell(card, x, y, team, lv) {
       if (dist2(u.x, u.y, x, y) < card.radius + u.r) {
         damageUnit(u, dmg);
         u.slowT = card.slow.t; u.slowF = card.slow.f;
+        if (card.knock) knockback(u, x, y, card.knock);
       }
     }
     return;
@@ -1144,7 +1214,10 @@ function castSpell(card, x, y, team, lv) {
     AudioSys.arrowRain();
     for (let w = 0; w < 3; w++) for (let i = 0; i < 9; i++) state.parts.push({ x: x + rand(-card.radius, card.radius), y: y - rand(0, card.radius), vx: rand(-24, 24), vy: rand(260, 400), g: 520, life: 0.5, r: 2, col: '#cfe6ff', streak: true });
   }
-  for (const u of state.units) if (!u.dead && u.team !== team && dist2(u.x, u.y, x, y) < card.radius + u.r) damageUnit(u, dmg);
+  for (const u of state.units) if (!u.dead && u.team !== team && dist2(u.x, u.y, x, y) < card.radius + u.r) {
+    damageUnit(u, dmg);
+    if (card.knock) knockback(u, x, y, card.knock);   // 爆炸击退（火球/火箭/流星火雨）
+  }
   for (const b of state.buildings) if (!b.dead && b.team !== team && dist2(b.x, b.y, x, y) < card.radius + b.r) damageBuilding(b, dmg);
   for (const tw of state.towers) if (!tw.dead && tw.team !== team && dist2(tw.x, tw.y, x, y) < card.radius + tw.r) damageTower(tw, Math.round(dmg * card.towerFactor));
 }
@@ -1213,6 +1286,8 @@ function playCard(id, x, y, team) {
 }
 
 /* ---------------- 主更新 ---------------- */
+// AI 圣水回复速率：随难度 0.8×（简单）→ 1.2×（无双），双人模式双方一致
+function aiElixirRate() { return state.mode === 'ai' ? 0.8 + state.difficulty * 0.04 : 1; }
 function update(dt) {
   state.elapsed += dt;
   state.time -= dt;
@@ -1223,8 +1298,8 @@ function update(dt) {
     AudioSys.tone(660, 880, 0.25, 'triangle', 0.5);
   }
   state.elixir[0] = clamp(state.elixir[0] + ELIXIR_RATE * m2 * dt, 0, ELIXIR_MAX);
-  // AI 圣水速率随难度变化：简单 0.9× → 无双 1.15×（双人模式双方一致）
-  const aiRate = state.mode === 'ai' ? 0.9 + state.difficulty * 0.025 : 1;
+  // AI 圣水速率随难度变化：简单 0.8× → 无双 1.2×（双人模式双方一致）
+  const aiRate = aiElixirRate();
   state.elixir[1] = clamp(state.elixir[1] + ELIXIR_RATE * m2 * dt * aiRate, 0, ELIXIR_MAX);
   updateTowers(dt);
   updateUnits(dt);
@@ -1478,6 +1553,15 @@ function drawTower(tw) {
     ctx.fillText('👑', tw.x, Math.max(F.top + 22, tw.y - tw.r - 24));
   }
   hpBar(tw.x, tw.y - tw.r - 10, tw.r * 2, tw.hp / tw.maxHp, tw.team);
+  // 冰冻特效
+  if (tw.freeze > 0) {
+    ctx.fillStyle = 'rgba(140,210,255,0.35)';
+    rr(tw.x - tw.r, tw.y - tw.r * 0.45, tw.r * 2, tw.r * 1.75, 6);
+    ctx.fill();
+    ctx.font = '18px "Segoe UI Emoji",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('🧊', tw.x, tw.y - tw.r * 0.9);
+  }
   ctx.restore();
 }
 function drawUnit(u) {
@@ -1503,6 +1587,12 @@ function drawUnit(u) {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('🧊', u.x + u.r * 0.8, u.y - u.r * 0.9);
   }
+  // 减速标记（寒冰法师 / 冰石人 / 雪球）
+  if (u.slowT > 0) {
+    ctx.font = Math.round(u.r * 1.0) + 'px "Segoe UI Emoji",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('❄', u.x - u.r * 0.8, u.y - u.r * 0.9);
+  }
   hpBar(u.x, u.y - u.r - 12, u.r * 2.2, u.hp / u.maxHp, u.team, 4);
   ctx.restore();
 }
@@ -1518,6 +1608,13 @@ function drawBuilding(b) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(b.card.emoji, b.x, b.y);
   hpBar(b.x, b.y - b.r - 10, b.r * 2, b.hp / b.maxHp, b.team);
+  if (b.freeze > 0) {
+    ctx.fillStyle = 'rgba(140,210,255,0.3)';
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+    ctx.font = '14px "Segoe UI Emoji",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('🧊', b.x, b.y - b.r - 6);
+  }
   ctx.restore();
 }
 function drawProj(p) {
@@ -1845,7 +1942,7 @@ function drawMenu() {
     ctx.fillText(b.label, W / 2, b.y + bh / 2 + 1);
     ui.menu.push({ id: b.id, x: bx, y: b.y, w: bw, h: bh });
   }
-  const dy = hasMatch ? 478 : 428;
+  const dy = hasMatch ? 494 : 446;   // 与按钮、下方文字行保持间距，避免重合
   // 难度循环选择：◀ 当前难度（显示该档胜利奖杯）▶
   const dl = { x: W / 2 - 132, w: 36 }, dc = { x: W / 2 - 92, w: 184 }, dr = { x: W / 2 + 96, w: 36 }, dh = 38;
   rr(dl.x, dy, dl.w, dh, 19);
@@ -1871,17 +1968,17 @@ function drawMenu() {
   // 宝箱里程碑一览（达到奖杯自动开启）
   ctx.font = '10px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#6f829c';
-  ctx.fillText('宝箱 🎁 ' + CHESTS.map(c => (save.trophies >= c.at && !save.chests.includes(c.at) ? '🔔' : save.chests.includes(c.at) ? '✅' : '🔒') + c.at).join(' '), W / 2, dy + dh + 14);
+  ctx.fillText('宝箱 ' + CHESTS.map(c => (save.pendingChests.includes(c.at) ? '🎁' : save.chests.includes(c.at) ? '✅' : '🔒') + c.at).join(' '), W / 2, dy + dh + 16);
   // 生涯战绩
   const st = save.stats || {};
   ctx.textAlign = 'center';
   ctx.font = '12px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#8fa3c0';
-  ctx.fillText('📊 总场次 ' + (st.played || 0) + ' · 胜 ' + (st.wins || 0) + ' · 负 ' + (st.losses || 0) + ' · 平 ' + (st.draws || 0) + ' · 最高 🏆' + (st.best || save.trophies || 0), W / 2, hasMatch ? 546 : 498);
+  ctx.fillText('📊 总场次 ' + (st.played || 0) + ' · 胜 ' + (st.wins || 0) + ' · 负 ' + (st.losses || 0) + ' · 平 ' + (st.draws || 0) + ' · 最高 🏆' + (st.best || save.trophies || 0), W / 2, dy + dh + 36);
   // 当前出战卡组
   ctx.font = '12px "Segoe UI Emoji","Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#a8bcd8';
-  ctx.fillText('出战卡组 ' + save.deck.map(id => CARDS[id] ? CARDS[id].emoji : '❓').join(' '), W / 2, hasMatch ? 562 : 514);
+  ctx.fillText('出战卡组 ' + save.deck.map(id => CARDS[id] ? CARDS[id].emoji : '❓').join(' '), W / 2, dy + dh + 54);
   // 存档导入 / 导出
   const eb = [{ id: 'export', label: '📤 导出存档', x: 30 }, { id: 'import', label: '📥 导入存档', x: 220 }];
   for (const b of eb) {
@@ -1900,7 +1997,7 @@ function drawMenu() {
   ctx.fillText('地面单位只能从桥过河 · 飞行单位可任意飞越', W / 2, hy + 20);
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#54687e';
-  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.6', W / 2, H - 24);
+  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.7', W / 2, H - 24);
 }
 function deckMaxScroll() {
   const ch = 100, gy = 8, y0 = 84;
@@ -2166,13 +2263,30 @@ function drawOver() {
     ctx.font = 'bold 16px "Microsoft YaHei",sans-serif';
     ctx.fillStyle = state.reward.t >= 0 ? '#ffd94d' : '#ff8a80';
     ctx.fillText((state.reward.t >= 0 ? '+' : '') + state.reward.t + ' 🏆   +' + state.reward.g + ' 🪙', W / 2, py + 184);
-    // 达到奖杯里程碑自动开启的宝箱
-    if (state.reward.chests && state.reward.chests.length) {
-      const names = state.reward.chests.map(c => '开启「' + c.name + '」+🪙' + c.gold);
-      const lines = names.length <= 2 ? [names.join('　')] : [names.slice(0, 3).join('　'), names.slice(3).join('　')];
+    // 待开启的宝箱：点击开启，获得金币与随机卡牌升级
+    const pend = (state.reward.pending || []).filter(m => save.pendingChests.includes(m));
+    if (pend.length) {
+      const cw2 = Math.min(140, (pw - 20 - (pend.length - 1) * 8) / pend.length);
+      pend.forEach((m, i) => {
+        const c = CHESTS.find(x => x.at === m);
+        const cx2 = W / 2 + (i - (pend.length - 1) / 2) * (cw2 + 8);
+        const bx3 = cx2 - cw2 / 2, by3 = py + 190, bh3 = 24;
+        rr(bx3, by3, cw2, bh3, 12);
+        ctx.fillStyle = '#7a5a20'; ctx.fill();
+        ctx.strokeStyle = '#ffb74d'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.font = 'bold 12px "Microsoft YaHei",sans-serif';
+        ctx.fillStyle = '#ffe9b0';
+        ctx.fillText('🎁 ' + c.name, cx2, by3 + bh3 / 2 + 1);
+        ui.over.push({ id: 'chest', m, x: bx3, y: by3, w: cw2, h: bh3 });
+      });
+    }
+    // 开箱结果
+    const cr = state.reward.chestResult;
+    if (cr) {
       ctx.font = 'bold 12px "Microsoft YaHei",sans-serif';
-      ctx.fillStyle = '#ffb74d';
-      lines.forEach((ln, i) => ctx.fillText('🎁 ' + ln, W / 2, py + 197 + i * 18));
+      ctx.fillStyle = '#ffd94d';
+      const cardTxt = cr.cards.map(id => CARDS[id].emoji + CARDS[id].name).join('　');
+      ctx.fillText('开启「' + cr.name + '」 +🪙' + cr.gold + ' · 卡牌升级：' + (cardTxt || '无'), W / 2, py + 211);
     }
   }
   const bs = [['replay', '再来一局', py + 226], ['menu', '返回主菜单', py + 274]];
@@ -2305,7 +2419,8 @@ canvas.addEventListener('pointerdown', (e) => {
   if (state.screen === 'over') {
     for (const b of ui.over) {
       if (!inRect(p, b)) continue;
-      if (b.id === 'replay') newGame(state.mode, state.difficulty);
+      if (b.id === 'chest') chestOpen(b.m);
+      else if (b.id === 'replay') newGame(state.mode, state.difficulty);
       else if (b.id === 'menu') state.screen = 'menu';
       return;
     }
