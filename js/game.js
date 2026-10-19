@@ -93,13 +93,13 @@ const CARD_DEFS = [
   ['goblinGiant','哥布林巨人', '🎒',  5, 'unit', 2600, 110, 1.6, 26,  36,  'buildings', 21, null],
   ['balloon',    '气球兵',     '🎈',  4, 'unit', 900,  420, 2.2, 24,  55,  'buildings', 19, { fly: true, splash: 70 }],
   // —— 建筑 ——
-  ['cannon',      '加农炮',       '🧨',  4, 'building', 1100, 85,  0.9,  150, 0, 'any', 18, { building: { kind: 'shooter' } }],
-  ['mortar',      '迫击炮',       '🎇',  4, 'building', 950,  170, 1.6,  220, 0, 'any', 18, { building: { kind: 'shooter' }, splash: 55 }],
-  ['tesla',       '特斯拉电磁塔', '⚡',  4, 'building', 900,  75,  0.75, 140, 0, 'any', 16, { building: { kind: 'shooter' } }],
-  ['xBow',        '弩炮',         '☄️', 5, 'building', 1300, 55,  0.35, 260, 0, 'any', 20, { building: { kind: 'shooter' } }],
-  ['goblinHut',   '哥布林小屋',   '🛖',  4, 'building', 1200, 0,   0,    0,   0, 'any', 20, { building: { kind: 'spawner', interval: 4, max: 3, spawn: 'goblin' } }],
-  ['tombstone',   '骷髅墓碑',     '🪦',  3, 'building', 700,  0,   0,    0,   0, 'any', 16, { building: { kind: 'spawner', interval: 4.5, max: 3, spawn: 'skeleton' } }],
-  ['elixirPump',  '圣水泵',       '🫗',  5, 'building', 1000, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 } }],
+  ['cannon',      '加农炮',       '🧨',  4, 'building', 1100, 85,  0.9,  150, 0, 'any', 18, { building: { kind: 'shooter' }, size: 1 }],
+  ['mortar',      '迫击炮',       '🎇',  4, 'building', 950,  170, 1.6,  220, 0, 'any', 18, { building: { kind: 'shooter' }, splash: 55, size: 1 }],
+  ['tesla',       '特斯拉电磁塔', '⚡',  4, 'building', 900,  75,  0.75, 140, 0, 'any', 16, { building: { kind: 'shooter' }, size: 1 }],
+  ['xBow',        '弩炮',         '☄️', 5, 'building', 1300, 55,  0.35, 260, 0, 'any', 20, { building: { kind: 'shooter' }, size: 2 }],
+  ['goblinHut',   '哥布林小屋',   '🛖',  4, 'building', 1200, 0,   0,    0,   0, 'any', 20, { building: { kind: 'spawner', interval: 4, max: 3, spawn: 'goblin' }, size: 2 }],
+  ['tombstone',   '骷髅墓碑',     '🪦',  3, 'building', 700,  0,   0,    0,   0, 'any', 16, { building: { kind: 'spawner', interval: 4.5, max: 3, spawn: 'skeleton' }, size: 1 }],
+  ['elixirPump',  '圣水泵',       '🫗',  5, 'building', 1000, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 }, size: 2 }],
   // —— 法术 ——
   ['freeze',       '冰冻术',   '🧊',  4, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 95, freeze: 2.2 }],
   ['poison',       '毒药',     '☠️', 4, 'spell', 0, 42,  0, 0, 0, 'any', 0, { radius: 95, zone: 'poison', duration: 6 }],
@@ -1000,6 +1000,26 @@ function castSpell(card, x, y, team, lv) {
 }
 
 /* ---------------- 出牌 ---------------- */
+// 部署网格：战场划分为小方格，卡牌只能从格子中心开始放置
+const CELL = 20;
+function snapCell(x, y) {
+  return { x: (Math.floor(x / CELL) + 0.5) * CELL, y: (Math.floor(y / CELL) + 0.5) * CELL };
+}
+// 建筑占地格数（边长，1 = 1×1，2 = 2×2）；单位与法术占 1 格
+function footprint(id) {
+  const card = CARDS[id];
+  return card.type === 'building' ? (card.size || 1) : 1;
+}
+// 占格校验：size×size 的每个格子都要在可部署范围内
+function canPlaceAt(id, x, y, team) {
+  const s = footprint(id);
+  const off = (s - 1) * CELL / 2;
+  for (let i = 0; i < s; i++) for (let j = 0; j < s; j++) {
+    const cx = x - off + i * CELL, cy = y - off + j * CELL;
+    if (cx < 18 || cx > W - 18 || !canDeploy(id, cx, cy, team)) return false;
+  }
+  return true;
+}
 function canDeploy(id, x, y, team) {
   const card = CARDS[id];
   if (state.elixir[team] < card.cost) return false;
@@ -1460,18 +1480,40 @@ function drawHUDPvP() {
   ui.hand = [];
   drawHand(0, 12, b + 48, 84, 80, 8, ui.hand);
 }
+function drawGrid() {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  for (let gx = 0; gx <= W; gx += CELL) { ctx.moveTo(gx, F.top); ctx.lineTo(gx, F.bottom); }
+  for (let gy = Math.ceil(F.top / CELL) * CELL; gy <= F.bottom; gy += CELL) { ctx.moveTo(0, gy); ctx.lineTo(W, gy); }
+  ctx.stroke();
+  ctx.restore();
+}
 function drawDrags() {
   for (const d of drags.values()) {
     if (d.y >= F.top && d.y <= F.bottom) {
       const card = CARDS[d.id];
+      const sc = snapCell(d.x, d.y);
+      const s = footprint(d.id);
+      const ok = canPlaceAt(d.id, sc.x, sc.y, d.team);
       const rad = card.type === 'spell' ? (card.radius || 40) : card.r + 10;
-      const ok = canDeploy(d.id, d.x, d.y, d.team);
       ctx.beginPath();
-      ctx.arc(d.x, d.y, rad, 0, Math.PI * 2);
+      ctx.arc(sc.x, sc.y, rad, 0, Math.PI * 2);
       ctx.fillStyle = ok ? 'rgba(90,200,120,0.25)' : 'rgba(255,60,50,0.25)';
       ctx.fill();
       ctx.strokeStyle = ok ? '#5ec878' : '#ff5a4e';
       ctx.lineWidth = 2; ctx.stroke();
+      // 占地格高亮（建筑按 size×size 显示，单位/法术 1 格）
+      const off = (s - 1) * CELL / 2;
+      for (let i = 0; i < s; i++) for (let j = 0; j < s; j++) {
+        const gx = sc.x - off + i * CELL, gy = sc.y - off + j * CELL;
+        ctx.fillStyle = ok ? 'rgba(90,200,120,0.3)' : 'rgba(255,60,50,0.3)';
+        ctx.fillRect(gx - CELL / 2, gy - CELL / 2, CELL, CELL);
+        ctx.strokeStyle = ok ? 'rgba(94,200,120,0.9)' : 'rgba(255,90,78,0.9)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(gx - CELL / 2, gy - CELL / 2, CELL, CELL);
+      }
     }
     ctx.save();
     ctx.globalAlpha = 0.85;
@@ -1591,7 +1633,7 @@ function drawMenu() {
   ctx.fillText('地面单位只能从桥过河 · 飞行单位可任意飞越', W / 2, hy + 20);
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#54687e';
-  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.3', W / 2, H - 24);
+  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.4', W / 2, H - 24);
 }
 function deckMaxScroll() {
   const ch = 100, gy = 8, y0 = 84;
@@ -1863,6 +1905,7 @@ function render() {
   if (state.shake > 0) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
   drawArena();
   drawZones();
+  if ((drags.size > 0 || select) && state.screen === 'playing') drawGrid();   // 只在放置过程中显示淡色网格
   for (const tw of state.towers) if (!tw.dead) drawTower(tw);
   for (const b of state.buildings) drawBuilding(b);
   const sorted = state.units.slice().sort((a, b) => a.y - b.y);
@@ -1971,10 +2014,11 @@ canvas.addEventListener('pointerdown', (e) => {
     for (const c of ui.hand2) if (inRect(p, c)) { grab(c); return; }
   }
   for (const c of ui.hand) if (inRect(p, c)) { grab(c); return; }
-  // 点击战场：部署已选卡牌
+  // 点击战场：部署已选卡牌（吸附到格子中心，建筑按占格校验）
   if (select) {
-    if (p.y >= F.top && p.y <= F.bottom && canDeploy(select.id, p.x, p.y, select.team)) {
-      playCard(select.id, p.x, p.y, select.team);
+    if (p.y >= F.top && p.y <= F.bottom) {
+      const sc = snapCell(p.x, p.y);
+      if (canPlaceAt(select.id, sc.x, sc.y, select.team)) playCard(select.id, sc.x, sc.y, select.team);
     }
     if (state.elixir[select.team] < CARDS[select.id].cost || p.y < F.top || p.y > F.bottom) select = null;
   }
@@ -2000,8 +2044,9 @@ window.addEventListener('pointerup', (e) => {
   const d = drags.get(e.pointerId);
   if (!d) return;
   const p = toCanvas(e);
-  if (d.moved && p.y >= F.top && p.y <= F.bottom && canDeploy(d.id, p.x, p.y, d.team)) {
-    playCard(d.id, p.x, p.y, d.team);
+  if (d.moved && p.y >= F.top && p.y <= F.bottom) {
+    const sc = snapCell(p.x, p.y);   // 落点吸附到格子中心
+    if (canPlaceAt(d.id, sc.x, sc.y, d.team)) playCard(d.id, sc.x, sc.y, d.team);
   }
   drags.delete(e.pointerId);   // 未移动的点击保留 select，走点选部署流程
 });
