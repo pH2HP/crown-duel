@@ -1,8 +1,12 @@
 "use strict";
 /* ============================================================
-   皇冠对决 Crown Duel  v3.7
+   皇冠对决 Crown Duel  v3.7.1
    HTML5 Canvas 塔防卡牌对战（单机 vs AI / 本地双人对战）
    灵感来自《部落冲突：皇室战争》的对战玩法，代码与美术均为原创实现。
+
+   v3.7.1 更新：
+   - 修复手机端卡牌图标显示：部分新 Emoji 换成全平台兼容的旧版表情
+   - 新增表情兼容检测：设备缺失的表情自动回退为「彩色圆底 + 名字首字」图标，任何设备都看得清
 
    v3.7 更新：
    - 击退机制：火球 / 火箭 / 流星火雨爆炸击退，滚木横向击退，雪球小幅击退
@@ -79,7 +83,7 @@ const CARD_DEFS = [
   ['swordsman',   '剑士',       '⚔️',  3, 'unit',     680,  95,  1.0, 22,  60,  'any', 14, null],
   ['knight',      '骑士',       '🐴',  3, 'unit',     1100, 120, 1.1, 22,  66,  'any', 14, null],
   ['archer',      '弓手',       '🏹',  3, 'unit',     270,  70,  1.0, 95,  60,  'any', 12, null],
-  ['rascals',     '盗贼团伙',   '🥷',  3, 'unit',     215,  66,  1.1, 20,  74,  'any', 11, { count: 3 }],
+  ['rascals',     '盗贼团伙',   '🃏',  3, 'unit',     215,  66,  1.1, 20,  74,  'any', 11, { count: 3 }],
   ['bomber',      '炮手',       '💣',  4, 'unit',     350,  140, 1.9, 95,  50,  'any', 13, { splash: 50 }],
   ['ogre',        '食人魔',     '👹',  4, 'unit',     1950, 150, 1.5, 26,  38,  'buildings', 20, null],
   ['giant',       '巨人',       '🗿',  5, 'unit',     2800, 110, 1.7, 28,  33,  'buildings', 21, null],
@@ -91,11 +95,11 @@ const CARD_DEFS = [
   // —— 新增近战 / 地面单位 ——
   ['goblin',        '哥布林',       '👺',  2, 'unit', 80,   60,  1.1, 20,  105, 'any', 10, { count: 3 }],
   ['spearGoblin',   '掷矛哥布林',   '🎯',  2, 'unit', 90,   55,  1.3, 110, 105, 'any', 10, null],
-  ['goblinThrower', '哥布林投手',   '🧪',  3, 'unit', 160,  90,  1.5, 100, 90,  'any', 11, null],
-  ['barbarian',     '野蛮人',       '🪓',  4, 'unit', 900,  105, 1.4, 24,  60,  'any', 15, null],
-  ['eliteBarbarian','精英野蛮人',   '🦾',  5, 'unit', 1350, 160, 1.3, 24,  66,  'any', 15, null],
+  ['goblinThrower', '哥布林投手',   '🍾',  3, 'unit', 160,  90,  1.5, 100, 90,  'any', 11, null],
+  ['barbarian',     '野蛮人',       '⚒️',  4, 'unit', 900,  105, 1.4, 24,  60,  'any', 15, null],
+  ['eliteBarbarian','精英野蛮人',   '💪',  5, 'unit', 1350, 160, 1.3, 24,  66,  'any', 15, null],
   ['skeleton',      '骷髅兵',       '💀',  2, 'unit', 90,   55,  1.0, 20,  95,  'any', 9,  { count: 4 }],
-  ['skeletonKing',  '骷髅王',       '🦴',  4, 'unit', 1700, 135, 1.5, 26,  55,  'any', 18, null],
+  ['skeletonKing',  '骷髅王',       '⚱️',  4, 'unit', 1700, 135, 1.5, 26,  55,  'any', 18, null],
   ['valkyrie',      '女武神',       '🌪️', 4, 'unit', 1100, 130, 1.5, 26,  60,  'any', 16, { splash: 45 }],
   ['darkPrince',    '黑暗王子',     '🖤',  4, 'unit', 1200, 150, 1.4, 26,  60,  'any', 16, { splash: 40 }],
   ['prince',        '王子',         '🤴',  4, 'unit', 1400, 220, 1.6, 26,  70,  'any', 15, null],
@@ -103,46 +107,46 @@ const CARD_DEFS = [
   ['iceGolem',      '冰石人',       '⛄',  3, 'unit', 1000, 50,  2.0, 24,  45,  'any', 18, { slow: { t: 1.5, f: 0.5 } }],
   ['miniPekka',     '迷你皮卡',     '🔪',  4, 'unit', 1100, 260, 1.7, 24,  66,  'any', 15, null],
   ['werewolf',      '狼人',         '🐺',  4, 'unit', 1250, 170, 1.3, 24,  70,  'any', 16, null],
-  ['goblinGang',    '哥布林大军',   '🪃',  4, 'unit', 95,   60,  1.2, 22,  100, 'any', 10, { count: 5 }],
+  ['goblinGang',    '哥布林大军',   '🐀',  4, 'unit', 95,   60,  1.2, 22,  100, 'any', 10, { count: 5 }],
   ['pekka',         '皮卡超人',     '🗡️', 6, 'unit', 2800, 320, 1.9, 26,  36,  'any', 21, null],
   // —— 远程 / 飞行单位 ——
   ['musketeer',    '火枪手',       '🔫',  4, 'unit', 420,  150, 1.5, 150, 55,  'any', 12, null],
   ['wizard',       '法师',         '🔮',  4, 'unit', 520,  135, 1.4, 105, 50,  'any', 13, { splash: 50 }],
-  ['iceWizard',    '寒冰法师',     '🥶',  3, 'unit', 400,  75,  1.6, 100, 50,  'any', 12, { slow: { t: 2, f: 0.5 } }],
+  ['iceWizard',    '寒冰法师',     '❄️',  3, 'unit', 400,  75,  1.6, 100, 50,  'any', 12, { slow: { t: 2, f: 0.5 } }],
   ['knightArcher', '骑射手',       '🏇',  4, 'unit', 500,  85,  1.3, 110, 80,  'any', 13, null],
   ['babyDragon',   '飞龙宝宝',     '🐲',  4, 'unit', 800,  110, 1.5, 85,  65,  'any', 16, { fly: true, splash: 45 }],
   ['minions',      '亡灵',         '👻',  3, 'unit', 150,  60,  1.1, 22,  88,  'any', 10, { count: 3, fly: true }],
   ['minionHorde',  '亡灵大军',     '🌑',  4, 'unit', 150,  60,  1.1, 22,  88,  'any', 10, { count: 6, fly: true }],
   ['bats',         '蝙蝠',         '🦇',  2, 'unit', 65,   35,  1.0, 20,  105, 'any', 8,  { count: 5, fly: true }],
   ['lavaHound',    '熔岩猎犬',     '🐕',  7, 'unit', 3200, 65,  1.6, 24,  45,  'any', 22, { fly: true }],
-  ['phoenix',      '凤凰',         '🐦‍🔥', 4, 'unit', 700, 120,  1.4, 85,  70,  'any', 15, { fly: true }],
+  ['phoenix',      '凤凰',         '🐦',  4, 'unit', 700, 120,  1.4, 85,  70,  'any', 15, { fly: true }],
   ['griffin',      '狮鹫',         '🦅',  4, 'unit', 1000, 140, 1.4, 90,  75,  'any', 17, { fly: true, splash: 40 }],
   // —— 攻城单位 ——
   ['hogRider',   '野猪骑士',   '🐗',  4, 'unit', 1250, 140, 1.5, 24,  95,  'buildings', 15, null],
   ['ramRider',   '攻城锤手',   '🔨',  4, 'unit', 1100, 120, 1.4, 24,  90,  'buildings', 15, null],
   ['royalGiant', '皇家巨人',   '🏰',  6, 'unit', 3200, 180, 1.8, 95,  30,  'buildings', 22, null],
-  ['golem',      '石头人',     '🪨',  7, 'unit', 3800, 150, 2.0, 28,  26,  'buildings', 23, null],
+  ['golem',      '石头人',     '🗻',  7, 'unit', 3800, 150, 2.0, 28,  26,  'buildings', 23, null],
   ['goblinGiant','哥布林巨人', '🎒',  5, 'unit', 2600, 110, 1.6, 26,  36,  'buildings', 21, null],
   ['balloon',    '气球兵',     '🎈',  4, 'unit', 900,  420, 2.2, 24,  55,  'buildings', 19, { fly: true, splash: 70 }],
   // —— 建筑 ——
-  ['cannon',      '加农炮',       '🧨',  4, 'building', 1600, 85,  0.9,  150, 0, 'any', 18, { building: { kind: 'shooter' }, size: 1 }],
+  ['cannon',      '加农炮',       '🎆',  4, 'building', 1600, 85,  0.9,  150, 0, 'any', 18, { building: { kind: 'shooter' }, size: 1 }],
   ['mortar',      '迫击炮',       '🎇',  4, 'building', 1400, 170, 1.6,  220, 0, 'any', 18, { building: { kind: 'shooter' }, splash: 55, size: 1 }],
   ['tesla',       '特斯拉电磁塔', '⚡',  4, 'building', 1300, 75,  0.75, 140, 0, 'any', 16, { building: { kind: 'shooter' }, size: 1 }],
   ['xBow',        '弩炮',         '☄️', 5, 'building', 1900, 55,  0.35, 260, 0, 'any', 20, { building: { kind: 'shooter' }, size: 2 }],
-  ['goblinHut',   '哥布林小屋',   '🛖',  4, 'building', 1800, 0,   0,    0,   0, 'any', 20, { building: { kind: 'spawner', interval: 4, max: 3, spawn: 'goblin' }, size: 2 }],
-  ['tombstone',   '骷髅墓碑',     '🪦',  3, 'building', 1000, 0,   0,    0,   0, 'any', 16, { building: { kind: 'spawner', interval: 4.5, max: 3, spawn: 'skeleton' }, size: 1 }],
-  ['elixirPump',  '圣水泵',       '🫗',  5, 'building', 1500, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 }, size: 2 }],
+  ['goblinHut',   '哥布林小屋',   '🏠',  4, 'building', 1800, 0,   0,    0,   0, 'any', 20, { building: { kind: 'spawner', interval: 4, max: 3, spawn: 'goblin' }, size: 2 }],
+  ['tombstone',   '骷髅墓碑',     '⚰️',  3, 'building', 1000, 0,   0,    0,   0, 'any', 16, { building: { kind: 'spawner', interval: 4.5, max: 3, spawn: 'skeleton' }, size: 1 }],
+  ['elixirPump',  '圣水泵',       '💧',  5, 'building', 1500, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 }, size: 2 }],
   // —— 法术 ——
-  ['freeze',       '冰冻术',   '🧊',  4, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 95, freeze: 3 }],
+  ['freeze',       '冰冻术',   '🌨️', 4, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 95, freeze: 3 }],
   ['poison',       '毒药',     '☠️', 4, 'spell', 0, 42,  0, 0, 0, 'any', 0, { radius: 95, zone: 'poison', duration: 6 }],
   ['rage',         '狂暴术',   '🔥',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 110, zone: 'rage', duration: 5, boost: 1.4 }],
-  ['log',          '滚木',     '🪵',  2, 'spell', 0, 180, 0, 0, 0, 'any', 0, { radius: 85, logRange: 170, width: 55, knock: 60 }],
+  ['log',          '滚木',     '🌲',  2, 'spell', 0, 180, 0, 0, 0, 'any', 0, { radius: 85, logRange: 170, width: 55, knock: 60 }],
   ['lightning',    '雷电术',   '🌩️', 4, 'spell', 0, 260, 0, 0, 0, 'any', 0, { radius: 130, strikes: 3, towerFactor: 0.35 }],
   ['rocket',       '火箭',     '🚀',  5, 'spell', 0, 700, 0, 0, 0, 'any', 0, { radius: 45, towerFactor: 0.4, knock: 120 }],
   ['earthquake',   '地震',     '🌋',  3, 'spell', 0, 250, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 2.2, buildingFactor: 1.5, unitFactor: 0.35 }],
-  ['snowBall',     '雪球',     '❄️', 2, 'spell', 0, 90,  0, 0, 0, 'any', 0, { radius: 60, slow: { t: 1.5, f: 0.5 }, knock: 45 }],
+  ['snowBall',     '雪球',     '⚪', 2, 'spell', 0, 90,  0, 0, 0, 'any', 0, { radius: 60, slow: { t: 1.5, f: 0.5 }, knock: 45 }],
   ['meteorShower', '流星火雨', '💫',  6, 'spell', 0, 380, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 0.5, knock: 90 }],
-  ['mirror',       '镜像术',   '🪞',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 60 }],
+  ['mirror',       '镜像术',   '✨',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 60 }],
 ];
 /* 卡牌解锁：达到对应奖杯阶段解锁（未列出 = 0，新手训练场可用） */
 const UNLOCK = {};
@@ -157,6 +161,65 @@ for (const d of CARD_DEFS) {
   const [id, name, emoji, cost, type, hp, dmg, atk, range, speed, targets, r, ext] = d;
   CARDS[id] = { id, name, emoji, cost, type, hp, dmg, atk, range, speed, targets, r, ...(ext || {}) };
   DECK.push(id);
+}
+
+/* ---------------- 移动端表情兼容：逐卡检测 + 文字图标回退 ----------------
+   部分手机（旧系统 / 内置浏览器）缺少较新 Emoji，Canvas 会画成豆腐块或空白。
+   首次绘制某卡时在离屏画布渲染该表情并分析像素：空白或灰色空心框判定为不支持，
+   此后该卡一律画成「彩色圆底 + 名字首字」，任何设备都能看清图标。 */
+const EMOJI_OK = {};   // id → 本设备是否支持该卡表情
+const ICON_COL = {};
+DECK.forEach((id, i) => ICON_COL[id] = 'hsl(' + ((i * 47 + 210) % 360) + ',62%,45%)');
+function emojiOK(id) {
+  if (EMOJI_OK[id] !== undefined) return EMOJI_OK[id];
+  let ok = true;
+  try {
+    const c = document.createElement('canvas');
+    c.width = 40; c.height = 40;
+    const g = c.getContext('2d');
+    g.font = '30px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.clearRect(0, 0, 40, 40);
+    g.fillStyle = '#fff';
+    g.fillText(CARDS[id].emoji, 20, 20);
+    const d = g.getImageData(0, 0, 40, 40).data;
+    let opaque = 0, colored = 0, center = 0;
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) {
+      const i = (y * 40 + x) * 4;
+      if (d[i + 3] > 20) {
+        opaque++;
+        const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+        if (mx - mn > 30) colored++;
+        if (x >= 13 && x <= 26 && y >= 13 && y <= 26) center++;
+      }
+    }
+    ok = opaque > 25 && (colored > 10 || center > 15);   // 空白或豆腐块（灰色空心框）→ 不支持
+  } catch (e) { ok = true; }   // 检测失败时不回退（如测试桩环境）
+  EMOJI_OK[id] = ok;
+  return ok;
+}
+// 统一图标绘制：支持则画表情，否则画彩色圆底 + 名字首字（居中于 x,y，size 为表情字号）
+function drawIcon(g, id, x, y, size) {
+  const card = CARDS[id];
+  if (emojiOK(id)) {
+    g.font = Math.round(size) + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(card.emoji, x, y);
+  } else {
+    g.save();
+    g.beginPath();
+    g.arc(x, y, Math.max(7, size * 0.52), 0, Math.PI * 2);
+    g.fillStyle = ICON_COL[id];
+    g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.35)';
+    g.lineWidth = 1.5;
+    g.stroke();
+    g.fillStyle = '#fff';
+    g.font = 'bold ' + Math.round(size * 0.56) + 'px "Microsoft YaHei",sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(card.name[0], x, y + 1);
+    g.restore();
+  }
 }
 
 /* ---------------- 卡组系统（每场对局双方各携带 8 张） ---------------- */
@@ -1560,7 +1623,7 @@ function drawTower(tw) {
     ctx.fill();
     ctx.font = '18px "Segoe UI Emoji",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('🧊', tw.x, tw.y - tw.r * 0.9);
+    ctx.fillText('💠', tw.x, tw.y - tw.r * 0.9);
   }
   ctx.restore();
 }
@@ -1577,15 +1640,13 @@ function drawUnit(u) {
   ctx.save();
   ctx.translate(u.x, u.y);
   ctx.scale(sc * (u.dir < 0 ? -1 : 1), sc);   // 按移动方向水平翻转
-  ctx.font = Math.round(u.r * 2.7) + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(u.card.emoji, 0, 2);
+  drawIcon(ctx, u.card.id, 0, 2, u.r * 2.7);
   ctx.restore();
   // 冰冻标记
   if (u.freeze > 0) {
     ctx.font = Math.round(u.r * 1.2) + 'px "Segoe UI Emoji",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('🧊', u.x + u.r * 0.8, u.y - u.r * 0.9);
+    ctx.fillText('💠', u.x + u.r * 0.8, u.y - u.r * 0.9);
   }
   // 减速标记（寒冰法师 / 冰石人 / 雪球）
   if (u.slowT > 0) {
@@ -1604,16 +1665,14 @@ function drawBuilding(b) {
   ctx.beginPath(); ctx.ellipse(b.x, b.y + b.r * 0.8, b.r * 0.95, b.r * 0.4, 0, 0, Math.PI * 2); ctx.stroke();
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.beginPath(); ctx.ellipse(b.x, b.y + b.r * 0.8, b.r * 0.9, b.r * 0.38, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.font = Math.round(b.r * 2.2) + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(b.card.emoji, b.x, b.y);
+  drawIcon(ctx, b.card.id, b.x, b.y, b.r * 2.2);
   hpBar(b.x, b.y - b.r - 10, b.r * 2, b.hp / b.maxHp, b.team);
   if (b.freeze > 0) {
     ctx.fillStyle = 'rgba(140,210,255,0.3)';
     ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
     ctx.font = '14px "Segoe UI Emoji",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('🧊', b.x, b.y - b.r - 6);
+    ctx.fillText('💠', b.x, b.y - b.r - 6);
   }
   ctx.restore();
 }
@@ -1661,9 +1720,7 @@ function drawCard(id, x, y, w, h, selected, team = 0) {
   ctx.strokeStyle = selected ? '#ffd94d' : '#5c6f86';
   ctx.lineWidth = selected ? 3 : 1.5; ctx.stroke();
   if (!afford) ctx.globalAlpha = 0.45;
-  ctx.font = '30px "Segoe UI Emoji",sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(card.emoji, x + w / 2, y + 34);
+  drawIcon(ctx, id, x + w / 2, y + 34, 30);
   ctx.font = '12px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#dbe6f5';
   ctx.fillText(card.name, x + w / 2, y + h - 14);
@@ -1689,9 +1746,7 @@ function drawMini(id, x, y, w, h) {
   rr(x, y, w, h, 8);
   ctx.fillStyle = '#2c3c50'; ctx.fill();
   ctx.strokeStyle = '#5c6f86'; ctx.lineWidth = 1; ctx.stroke();
-  ctx.font = '18px "Segoe UI Emoji",sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(card.emoji, x + w / 2, y + 16);
+  drawIcon(ctx, id, x + w / 2, y + 16, 18);
   ctx.fillStyle = '#c26af0';
   ctx.font = 'bold 10px Consolas,monospace';
   ctx.fillText(card.cost, x + w / 2, y + h - 8);
@@ -1906,7 +1961,7 @@ function drawMenu() {
   ctx.fillText('🏆 ' + save.trophies, ax + 34, ay + 54);
   ctx.textAlign = 'right';
   ctx.fillStyle = '#ffd94d';
-  ctx.fillText('🪙 ' + save.gold, ax + aw - 34, ay + 54);
+  ctx.fillText('💰 ' + save.gold, ax + aw - 34, ay + 54);
   ctx.textAlign = 'left';
   if (next) {
     const pct = clamp((save.trophies - arena.min) / (next.min - arena.min), 0, 1);
@@ -1978,7 +2033,7 @@ function drawMenu() {
   // 当前出战卡组
   ctx.font = '12px "Segoe UI Emoji","Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#a8bcd8';
-  ctx.fillText('出战卡组 ' + save.deck.map(id => CARDS[id] ? CARDS[id].emoji : '❓').join(' '), W / 2, dy + dh + 54);
+  ctx.fillText('出战卡组 ' + save.deck.map(id => CARDS[id] ? (emojiOK(id) ? CARDS[id].emoji : CARDS[id].name[0]) : '❓').join(' '), W / 2, dy + dh + 54);
   // 存档导入 / 导出
   const eb = [{ id: 'export', label: '📤 导出存档', x: 30 }, { id: 'import', label: '📥 导入存档', x: 220 }];
   for (const b of eb) {
@@ -1997,7 +2052,7 @@ function drawMenu() {
   ctx.fillText('地面单位只能从桥过河 · 飞行单位可任意飞越', W / 2, hy + 20);
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#54687e';
-  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.7', W / 2, H - 24);
+  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.7.1', W / 2, H - 24);
 }
 function deckMaxScroll() {
   const ch = 100, gy = 8, y0 = 84;
@@ -2016,7 +2071,7 @@ function drawDeck() {
   ctx.textAlign = 'right';
   ctx.font = 'bold 16px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#ffd94d';
-  ctx.fillText('🪙 ' + save.gold, W - 20, 32);
+  ctx.fillText('💰 ' + save.gold, W - 20, 32);
   const bx = 20, by = 44, bw = 64, bh = 30;
   rr(bx, by, bw, bh, 15);
   ctx.fillStyle = '#2a3a4e'; ctx.fill();
@@ -2043,11 +2098,10 @@ function drawDeck() {
     rr(cx, cy, cw, ch, 12);
     ctx.fillStyle = '#1c2a3e'; ctx.fill();
     ctx.strokeStyle = '#40556e'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.textAlign = 'left';
-    ctx.font = '20px "Segoe UI Emoji",sans-serif';
-    ctx.fillText(card.emoji, cx + 10, cy + 18);
+    drawIcon(ctx, id, cx + 21, cy + 18, 20);
     ctx.font = 'bold 13px "Microsoft YaHei",sans-serif';
     ctx.fillStyle = '#e8eef7';
+    ctx.textAlign = 'left';
     ctx.fillText(card.name, cx + 10, cy + 38);
     ctx.textAlign = 'right';
     ctx.font = 'bold 11px Consolas,monospace';
@@ -2073,7 +2127,7 @@ function drawDeck() {
     ctx.textAlign = 'center';
     ctx.font = 'bold 12px "Microsoft YaHei",sans-serif';
     ctx.fillStyle = lock ? '#ffb74d' : maxed ? '#ffd94d' : afford ? '#fff' : '#6f829c';
-    ctx.fillText(lock ? '🔒 ' + (UNLOCK[id] || 0) + '🏆 解锁' : maxed ? '★ 已满级' : '升级 🪙' + upgradeCost(lv), cx + cw / 2, uby + ubh / 2 + 1);
+    ctx.fillText(lock ? '🔒 ' + (UNLOCK[id] || 0) + '🏆 解锁' : maxed ? '★ 已满级' : '升级 💰' + upgradeCost(lv), cx + cw / 2, uby + ubh / 2 + 1);
     ui.deck.push({ id: 'up:' + id, x: ubx, y: uby, w: ubw, h: ubh });
     if (lock) ctx.globalAlpha = 1;
   }
@@ -2146,7 +2200,7 @@ function drawDeckEdit() {
     ctx.textAlign = 'center';
     ctx.font = '13px "Microsoft YaHei",sans-serif';
     ctx.fillStyle = deckEditTeam === t ? '#d8ffe0' : '#e8eef7';
-    ctx.fillText((t === 0 ? '🟦 我方' : '🟥 对方'), tx + tw / 2, ty + th / 2 + 1);
+    ctx.fillText((t === 0 ? '🔵 我方' : '🔴 对方'), tx + tw / 2, ty + th / 2 + 1);
     ui.deckedit.push({ id: 'tab' + t, x: tx, y: ty, w: tw, h: th });
   }
   // 保存按钮命中区先注册（绘制仍在网格之后），避免点到被按钮遮挡的卡牌
@@ -2168,11 +2222,10 @@ function drawDeckEdit() {
     rr(cx, cy, cw, ch, 12);
     ctx.fillStyle = sel ? '#1e3a2e' : '#1c2a3e'; ctx.fill();
     ctx.strokeStyle = sel ? '#5ec878' : '#40556e'; ctx.lineWidth = sel ? 2.5 : 1.5; ctx.stroke();
-    ctx.textAlign = 'left';
-    ctx.font = '20px "Segoe UI Emoji",sans-serif';
-    ctx.fillText(card.emoji, cx + 10, cy + 16);
+    drawIcon(ctx, id, cx + 21, cy + 16, 20);
     ctx.font = 'bold 13px "Microsoft YaHei",sans-serif';
     ctx.fillStyle = '#e8eef7';
+    ctx.textAlign = 'left';
     ctx.fillText(card.name, cx + 10, cy + 38);
     // 圣水花费
     ctx.beginPath();
@@ -2262,7 +2315,7 @@ function drawOver() {
   if (state.reward) {
     ctx.font = 'bold 16px "Microsoft YaHei",sans-serif';
     ctx.fillStyle = state.reward.t >= 0 ? '#ffd94d' : '#ff8a80';
-    ctx.fillText((state.reward.t >= 0 ? '+' : '') + state.reward.t + ' 🏆   +' + state.reward.g + ' 🪙', W / 2, py + 184);
+    ctx.fillText((state.reward.t >= 0 ? '+' : '') + state.reward.t + ' 🏆   +' + state.reward.g + ' 💰', W / 2, py + 184);
     // 待开启的宝箱：点击开启，获得金币与随机卡牌升级
     const pend = (state.reward.pending || []).filter(m => save.pendingChests.includes(m));
     if (pend.length) {
@@ -2286,7 +2339,7 @@ function drawOver() {
       ctx.font = 'bold 12px "Microsoft YaHei",sans-serif';
       ctx.fillStyle = '#ffd94d';
       const cardTxt = cr.cards.map(id => CARDS[id].emoji + CARDS[id].name).join('　');
-      ctx.fillText('开启「' + cr.name + '」 +🪙' + cr.gold + ' · 卡牌升级：' + (cardTxt || '无'), W / 2, py + 211);
+      ctx.fillText('开启「' + cr.name + '」 +💰' + cr.gold + ' · 卡牌升级：' + (cardTxt || '无'), W / 2, py + 211);
     }
   }
   const bs = [['replay', '再来一局', py + 226], ['menu', '返回主菜单', py + 274]];
