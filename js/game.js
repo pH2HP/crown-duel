@@ -352,6 +352,80 @@ const AudioSys = {
     s.connect(f); f.connect(g); g.connect(this.master);
     s.start(t);
   },
+  // —— 环境音：不同竞技场不同氛围，音量保持很小 ——
+  ambArena: -1, ambGain: null, ambNodes: [], ambTimer: null,
+  startAmbient(a) {
+    if (this.ambArena === a && this.ctx) return;
+    this.stopAmbient();
+    this.ambArena = a;
+    if (!this.ctx) return;
+    const c = this.ctx;
+    const g = c.createGain();
+    g.gain.value = 0.06;   // 环境音总音量：很轻
+    g.connect(this.master);
+    this.ambGain = g;
+    const noise = (sec) => {
+      const b = c.createBuffer(1, Math.max(1, Math.floor(c.sampleRate * sec)), c.sampleRate);
+      const d = b.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const s = c.createBufferSource(); s.buffer = b; s.loop = true; s.start();
+      this.ambNodes.push(s);
+      return s;
+    };
+    const pass = (s, type, f, q = 0.5) => {
+      const fl = c.createBiquadFilter(); fl.type = type; fl.frequency.value = f; fl.Q.value = q;
+      s.connect(fl); fl.connect(g);
+      this.ambNodes.push(fl);
+    };
+    const tone = (f, v = 0.05, type = 'sine') => {
+      const o = c.createOscillator(); o.type = type; o.frequency.value = f;
+      const og = c.createGain(); og.gain.value = v;
+      o.connect(og); og.connect(g); o.start();
+      this.ambNodes.push(o, og);
+    };
+    const chirp = (f0, f1, f2, dur, vol, every) => {
+      this.ambTimer = setInterval(() => {
+        if (!this.ctx) return;
+        const t0 = this.ctx.currentTime;
+        const o = this.ctx.createOscillator(); o.type = 'sine';
+        o.frequency.setValueAtTime(f0, t0);
+        o.frequency.linearRampToValueAtTime(f1, t0 + dur * 0.4);
+        o.frequency.linearRampToValueAtTime(f2, t0 + dur);
+        const og = this.ctx.createGain();
+        og.gain.setValueAtTime(0.0001, t0);
+        og.gain.linearRampToValueAtTime(vol, t0 + 0.02);
+        og.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        o.connect(og); og.connect(g);
+        o.start(t0); o.stop(t0 + dur + 0.05);
+      }, every);
+    };
+    if (a === 0) {            // 新手训练场：草地微风 + 偶发鸟鸣
+      pass(noise(2), 'lowpass', 700);
+      chirp(2200, 2800, 2000, 0.2, 0.05, 4500 + Math.random() * 4000);
+    } else if (a === 1) {     // 青铜荒漠：沙风 + 低沉地鸣
+      pass(noise(2), 'bandpass', 650, 0.7);
+      tone(55, 0.03);
+    } else if (a === 2) {     // 白银石地：空洞风声
+      pass(noise(2), 'lowpass', 350);
+      tone(120, 0.015); tone(121.5, 0.015);
+    } else if (a === 3) {     // 黄金圣殿：暖色和声 + 悠远钟声
+      tone(220, 0.02, 'triangle'); tone(221.5, 0.02, 'triangle');
+      chirp(880, 880, 880, 1.6, 0.04, 6000 + Math.random() * 5000);
+    } else {                  // 传奇竞技场：暗黑低鸣
+      pass(noise(2), 'lowpass', 240);
+      tone(65, 0.04);
+    }
+  },
+  stopAmbient() {
+    if (this.ambTimer) { clearInterval(this.ambTimer); this.ambTimer = null; }
+    for (const n of this.ambNodes) {
+      try { if (n.stop) n.stop(); else n.disconnect(); } catch (e) { /* 已停止 */ }
+      try { n.disconnect(); } catch (e) { /* 已断开 */ }
+    }
+    this.ambNodes = [];
+    if (this.ambGain) { try { this.ambGain.disconnect(); } catch (e) { /* 已断开 */ } this.ambGain = null; }
+    this.ambArena = -1;
+  },
   deploy() { this.tone(320, 640, 0.12, 'square', 0.5); this.tone(640, 960, 0.1, 'sine', 0.4, 0.03); },
   hit() { this.noise(0.05, 0.35, 2400); },
   arrow() { this.tone(1000, 500, 0.06, 'triangle', 0.25); },
@@ -388,6 +462,7 @@ let state = { screen: 'menu', difficulty: 0 };
 const ui = { menu: [], deck: [], deckedit: [], over: [], hand: [], hand2: [] };   // 命中区域（每帧重建）
 const drags = new Map();    // pointerId -> { id, team, x, y, sx, sy, moved }
 let select = null;          // 点选待部署的卡 { id, team }
+let kbCursor = null;        // 双人模式键盘光标（我方用 1-4/WASD/空格操作，敌方用鼠标）
 let clock = 0;              // 全局动画时钟
 let deckScroll = 0;         // 牌库滚动
 let deckDrag = null;        // 牌库拖拽滚动状态 { y, s }
@@ -476,7 +551,7 @@ function newGame(mode, difficulty) {
   };
   state.queue = [shuffle(deck0), shuffle(deck1)];
   state.hand = [drawN(state.queue[0], 4, deck0), drawN(state.queue[1], 4, deck1)];
-  drags.clear(); select = null;
+  drags.clear(); select = null; kbCursor = null;
   save.match = null;   // 新开对局清掉旧的未完成对局
   saveGame();
 }
@@ -546,7 +621,7 @@ function restoreMatch(d) {
   uid = maxId + 1;
   for (const u of state.units) { u.target = byId[u._targetId] || null; delete u._targetId; }
   for (const p of state.projs) { p.tx = byId[p._targetId] || null; delete p._targetId; }
-  drags.clear(); select = null;
+  drags.clear(); select = null; kbCursor = null;
   return true;
 }
 function saveMatchNow() {
@@ -1234,13 +1309,18 @@ function hpBar(x, y, w, ratio, team, h = 5) {
   ctx.fillStyle = team === 0 ? '#4ade62' : '#ff4d4f';
   ctx.fillRect(x - w / 2, y, w * f, h);
 }
+// 双人模式下，上方阵营（玩家2）的实体上下翻转绘制，坐对面看才是正的
+function flipTeam1(team) { return state.mode === 'pvp' && team === 1; }
 function drawTower(tw) {
+  ctx.save();
+  if (flipTeam1(tw.team)) { ctx.translate(tw.x, tw.y); ctx.rotate(Math.PI); ctx.translate(-tw.x, -tw.y); }
   if (tw.dead) {
     ctx.fillStyle = 'rgba(40,34,28,0.85)';
     ctx.beginPath(); ctx.arc(tw.x, tw.y, tw.r * 0.8, 0, Math.PI * 2); ctx.fill();
     ctx.font = '22px "Segoe UI Emoji",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('💀', tw.x, tw.y);
+    ctx.restore();
     return;
   }
   const stone = '#cbb48f', dark = '#8a7352';
@@ -1273,8 +1353,11 @@ function drawTower(tw) {
     ctx.fillText('👑', tw.x, Math.max(F.top + 22, tw.y - tw.r - 24));
   }
   hpBar(tw.x, tw.y - tw.r - 10, tw.r * 2, tw.hp / tw.maxHp, tw.team);
+  ctx.restore();
 }
 function drawUnit(u) {
+  ctx.save();
+  if (flipTeam1(u.team)) { ctx.translate(u.x, u.y); ctx.rotate(Math.PI); ctx.translate(-u.x, -u.y); }
   // 阵营光圈 + 影子
   ctx.strokeStyle = u.team === 0 ? 'rgba(90,160,255,0.45)' : 'rgba(255,90,80,0.45)';
   ctx.lineWidth = 2;
@@ -1296,8 +1379,11 @@ function drawUnit(u) {
     ctx.fillText('🧊', u.x + u.r * 0.8, u.y - u.r * 0.9);
   }
   hpBar(u.x, u.y - u.r - 12, u.r * 2.2, u.hp / u.maxHp, u.team, 4);
+  ctx.restore();
 }
 function drawBuilding(b) {
+  ctx.save();
+  if (flipTeam1(b.team)) { ctx.translate(b.x, b.y); ctx.rotate(Math.PI); ctx.translate(-b.x, -b.y); }
   ctx.strokeStyle = b.team === 0 ? 'rgba(90,160,255,0.45)' : 'rgba(255,90,80,0.45)';
   ctx.lineWidth = 2;
   ctx.beginPath(); ctx.ellipse(b.x, b.y + b.r * 0.8, b.r * 0.95, b.r * 0.4, 0, 0, Math.PI * 2); ctx.stroke();
@@ -1307,6 +1393,7 @@ function drawBuilding(b) {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(b.card.emoji, b.x, b.y);
   hpBar(b.x, b.y - b.r - 10, b.r * 2, b.hp / b.maxHp, b.team);
+  ctx.restore();
 }
 function drawProj(p) {
   const t = p.tx;
@@ -1393,11 +1480,19 @@ function drawHand(team, x0, y, cw, ch, gap, rects) {
   const hand = state.hand[team];
   for (let i = 0; i < 4; i++) {
     const x = x0 + i * (cw + gap);
+    ctx.save();
+    if (flipTeam1(team)) { ctx.translate(x + cw / 2, y + ch / 2); ctx.rotate(Math.PI); ctx.translate(-(x + cw / 2), -(y + ch / 2)); }
     drawCard(hand[i], x, y, cw, ch, select && select.team === team && select.id === hand[i], team);
+    ctx.restore();
     rects.push({ id: hand[i], team, x, y, w: cw, h: ch });
   }
   const nx = x0 + cw * 4 + gap * 3 + 6;
-  if (state.queue[team].length) drawMini(state.queue[team][0], nx, y + (ch - 52) / 2, 40, 52);
+  if (state.queue[team].length) {
+    ctx.save();
+    if (flipTeam1(team)) { ctx.translate(nx + 20, y + (ch - 52) / 2 + 26); ctx.rotate(Math.PI); ctx.translate(-(nx + 20), -(y + (ch - 52) / 2 + 26)); }
+    drawMini(state.queue[team][0], nx, y + (ch - 52) / 2, 40, 52);
+    ctx.restore();
+  }
 }
 function elixirBar(team, x, y, w, h) {
   rr(x, y, w, h, 9);
@@ -1463,6 +1558,10 @@ function drawHUDPvP() {
   const s = Math.floor(Math.max(0, state.time) % 60);
   ctx.fillText(m + ':' + (s < 10 ? '0' : '') + s, W / 2, 100);
   elixirBar(1, 30, 114, W - 60, 16);
+  ctx.font = '11px "Microsoft YaHei",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#8fa3c0';
+  ctx.fillText('⌨️ 下方玩家：1-4 选卡 · WASD 移动 · 空格部署　|　🖱️ 上方玩家：鼠标操作', W / 2, 140);
   const b = F.bottom;
   ctx.fillStyle = '#1d2a3a';
   ctx.fillRect(0, b, W, H - b);
@@ -1517,9 +1616,38 @@ function drawDrags() {
     }
     ctx.save();
     ctx.globalAlpha = 0.85;
+    if (flipTeam1(d.team)) { ctx.translate(d.x, d.y); ctx.rotate(Math.PI); ctx.translate(-d.x, -d.y); }
     drawCard(d.id, d.x - 42, d.y - 42, 84, 84, false, d.team);
     ctx.restore();
   }
+}
+function drawKbCursor() {
+  if (state.mode !== 'pvp' || state.screen !== 'playing' || !kbCursor) return;
+  const sc = snapCell(kbCursor.x, kbCursor.y);
+  const sel = select && select.team === 0 ? select : null;
+  const ok = sel ? canPlaceAt(sel.id, sc.x, sc.y, 0) : true;
+  ctx.save();
+  ctx.strokeStyle = sel ? (ok ? 'rgba(94,200,120,0.95)' : 'rgba(255,90,78,0.95)') : 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(sc.x - CELL / 2, sc.y - CELL / 2, CELL, CELL);
+  if (sel) {
+    const s = footprint(sel.id);
+    const off = (s - 1) * CELL / 2;
+    for (let i = 0; i < s; i++) for (let j = 0; j < s; j++) {
+      const gx = sc.x - off + i * CELL, gy = sc.y - off + j * CELL;
+      ctx.fillStyle = ok ? 'rgba(90,200,120,0.3)' : 'rgba(255,60,50,0.3)';
+      ctx.fillRect(gx - CELL / 2, gy - CELL / 2, CELL, CELL);
+    }
+    ctx.globalAlpha = 0.85;
+    drawCard(sel.id, kbCursor.x - 42, kbCursor.y - 42, 84, 84, true, 0);
+    ctx.globalAlpha = 1;
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(kbCursor.x - 9, kbCursor.y); ctx.lineTo(kbCursor.x + 9, kbCursor.y);
+    ctx.moveTo(kbCursor.x, kbCursor.y - 9); ctx.lineTo(kbCursor.x, kbCursor.y + 9);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 /* ---------------- 渲染：菜单 / 牌库 / 结算 ---------------- */
@@ -1633,7 +1761,7 @@ function drawMenu() {
   ctx.fillText('地面单位只能从桥过河 · 飞行单位可任意飞越', W / 2, hy + 20);
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#54687e';
-  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.4', W / 2, H - 24);
+  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.5', W / 2, H - 24);
 }
 function deckMaxScroll() {
   const ch = 100, gy = 8, y0 = 84;
@@ -1905,7 +2033,7 @@ function render() {
   if (state.shake > 0) ctx.translate(rand(-state.shake, state.shake), rand(-state.shake, state.shake));
   drawArena();
   drawZones();
-  if ((drags.size > 0 || select) && state.screen === 'playing') drawGrid();   // 只在放置过程中显示淡色网格
+  if ((drags.size > 0 || select || kbCursor) && state.screen === 'playing') drawGrid();   // 只在放置过程中显示淡色网格
   for (const tw of state.towers) if (!tw.dead) drawTower(tw);
   for (const b of state.buildings) drawBuilding(b);
   const sorted = state.units.slice().sort((a, b) => a.y - b.y);
@@ -1916,6 +2044,7 @@ function render() {
   ctx.restore();
   drawHUD();
   drawDrags();
+  drawKbCursor();
   drawTexts();
   if (state.screen === 'over') drawOver();
 }
@@ -1927,8 +2056,15 @@ function loop(now) {
   last = now;
   if (dt > 0.05) dt = 0.05;
   clock += dt;
-  if (state.screen === 'playing') update(dt);
-  else if (state.screen === 'over') updateFx(dt);
+  if (state.screen === 'playing') {
+    update(dt);
+    AudioSys.startAmbient(ARENAS.indexOf(state.arena));   // 对局中播放当前竞技场环境音
+  } else if (state.screen === 'over') {
+    AudioSys.stopAmbient();
+    updateFx(dt);
+  } else {
+    AudioSys.stopAmbient();
+  }
   if (deckEditMsgT > 0) deckEditMsgT -= dt;
   render();
 }
@@ -2064,6 +2200,33 @@ canvas.addEventListener('wheel', (e) => {
   }
 }, { passive: false });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+/* 双人模式键盘控制：下方玩家 1-4 选卡、WASD 移动光标、空格/回车部署 */
+window.addEventListener('keydown', (e) => {
+  if (state.screen !== 'playing' || state.mode !== 'pvp') return;
+  const k = String(e.key).toLowerCase();
+  if ((k === '1' || k === '2' || k === '3' || k === '4') && !e.repeat) {
+    const id = state.hand[0][+k - 1];
+    if (id) select = { id, team: 0 };
+    return;
+  }
+  if (k === 'w' || k === 'a' || k === 's' || k === 'd') {
+    if (!kbCursor) kbCursor = snapCell(W / 2, F.bottom - 130);
+    if (k === 'a') kbCursor.x -= CELL;
+    if (k === 'd') kbCursor.x += CELL;
+    if (k === 'w') kbCursor.y -= CELL;
+    if (k === 's') kbCursor.y += CELL;
+    kbCursor.x = clamp(kbCursor.x, 18, W - 18);
+    kbCursor.y = clamp(kbCursor.y, F.top + 10, F.bottom - 10);
+    return;
+  }
+  if (k === ' ' || k === 'enter') {
+    e.preventDefault();
+    if (select && kbCursor && select.team === 0) {
+      const sc = snapCell(kbCursor.x, kbCursor.y);
+      if (canPlaceAt(select.id, sc.x, sc.y, 0)) playCard(select.id, sc.x, sc.y, 0);
+    }
+  }
+});
 
 /* ---------------- 静音按钮 ---------------- */
 const muteBtn = document.getElementById('muteBtn');
