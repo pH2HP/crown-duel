@@ -1,8 +1,18 @@
 "use strict";
 /* ============================================================
-   皇冠对决 Crown Duel  v3.1
+   皇冠对决 Crown Duel  v3.6
    HTML5 Canvas 塔防卡牌对战（单机 vs AI / 本地双人对战）
    灵感来自《部落冲突：皇室战争》的对战玩法，代码与美术均为原创实现。
+
+   v3.6 更新：
+   - 摧毁国王塔时其所有防御塔一并倒塌，胜方获得 3 皇冠
+   - 双方塔攻击范围均小于到中分线的距离（不再隔河打人）
+   - 11 档难度：简单→无双，AI 强度 / 圣水速率 / 胜利奖励逐档提升
+   - 奖杯阶段宝箱：首次达到 300/700/1200/1800/2400/3000 奖杯自动开启
+   - 卡牌按奖杯解锁：更高竞技场解锁更强卡牌（牌库与卡组界面显示🔒）
+   - 建筑生命值全面上调，站场更久
+   - 运动模型优化：单位按方向转身、接近攻击位自然减速、同队单位互相避让
+   - 画面美化：场地草丛小花、河面波光、桥面光影、塔身光晕、画面暗角
 
    v3.1 更新：
    - 进度保存系统：对局每 3 秒自动保存，退出后可「继续上次对局」
@@ -20,6 +30,17 @@
 const W = 420, H = 740;                    // 逻辑分辨率
 const MATCH_TIME = 180;                    // 对局时长（秒）
 const ELIXIR_MAX = 10, ELIXIR_START = 5, ELIXIR_RATE = 1 / 2.8;
+// 11 档难度：影响 AI 等级 / 反应速度 / 圣水速率与胜利奖励
+const DIFFS = ['简单', '普通', '标准', '较难', '困难', '极难', '专家', '宗师', '巅峰', '地狱', '无双'];
+// 奖杯阶段宝箱：首次达到对应奖杯时自动开启一次
+const CHESTS = [
+  { at: 300, name: '青铜宝箱', gold: 300 },
+  { at: 700, name: '白银宝箱', gold: 700 },
+  { at: 1200, name: '黄金宝箱', gold: 1200 },
+  { at: 1800, name: '传奇宝箱', gold: 1800 },
+  { at: 2400, name: '宗师宝箱', gold: 2400 },
+  { at: 3000, name: '巅峰宝箱', gold: 3000 },
+];
 const MAX_LV = 9;                          // 卡牌最高等级
 const BRIDGE_X = W / 2;                    // 桥的位置
 const BRIDGE_HALF = 55;                    // 桥的半宽（地面单位只能从桥上过河）
@@ -93,13 +114,13 @@ const CARD_DEFS = [
   ['goblinGiant','哥布林巨人', '🎒',  5, 'unit', 2600, 110, 1.6, 26,  36,  'buildings', 21, null],
   ['balloon',    '气球兵',     '🎈',  4, 'unit', 900,  420, 2.2, 24,  55,  'buildings', 19, { fly: true, splash: 70 }],
   // —— 建筑 ——
-  ['cannon',      '加农炮',       '🧨',  4, 'building', 1100, 85,  0.9,  150, 0, 'any', 18, { building: { kind: 'shooter' }, size: 1 }],
-  ['mortar',      '迫击炮',       '🎇',  4, 'building', 950,  170, 1.6,  220, 0, 'any', 18, { building: { kind: 'shooter' }, splash: 55, size: 1 }],
-  ['tesla',       '特斯拉电磁塔', '⚡',  4, 'building', 900,  75,  0.75, 140, 0, 'any', 16, { building: { kind: 'shooter' }, size: 1 }],
-  ['xBow',        '弩炮',         '☄️', 5, 'building', 1300, 55,  0.35, 260, 0, 'any', 20, { building: { kind: 'shooter' }, size: 2 }],
-  ['goblinHut',   '哥布林小屋',   '🛖',  4, 'building', 1200, 0,   0,    0,   0, 'any', 20, { building: { kind: 'spawner', interval: 4, max: 3, spawn: 'goblin' }, size: 2 }],
-  ['tombstone',   '骷髅墓碑',     '🪦',  3, 'building', 700,  0,   0,    0,   0, 'any', 16, { building: { kind: 'spawner', interval: 4.5, max: 3, spawn: 'skeleton' }, size: 1 }],
-  ['elixirPump',  '圣水泵',       '🫗',  5, 'building', 1000, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 }, size: 2 }],
+  ['cannon',      '加农炮',       '🧨',  4, 'building', 1600, 85,  0.9,  150, 0, 'any', 18, { building: { kind: 'shooter' }, size: 1 }],
+  ['mortar',      '迫击炮',       '🎇',  4, 'building', 1400, 170, 1.6,  220, 0, 'any', 18, { building: { kind: 'shooter' }, splash: 55, size: 1 }],
+  ['tesla',       '特斯拉电磁塔', '⚡',  4, 'building', 1300, 75,  0.75, 140, 0, 'any', 16, { building: { kind: 'shooter' }, size: 1 }],
+  ['xBow',        '弩炮',         '☄️', 5, 'building', 1900, 55,  0.35, 260, 0, 'any', 20, { building: { kind: 'shooter' }, size: 2 }],
+  ['goblinHut',   '哥布林小屋',   '🛖',  4, 'building', 1800, 0,   0,    0,   0, 'any', 20, { building: { kind: 'spawner', interval: 4, max: 3, spawn: 'goblin' }, size: 2 }],
+  ['tombstone',   '骷髅墓碑',     '🪦',  3, 'building', 1000, 0,   0,    0,   0, 'any', 16, { building: { kind: 'spawner', interval: 4.5, max: 3, spawn: 'skeleton' }, size: 1 }],
+  ['elixirPump',  '圣水泵',       '🫗',  5, 'building', 1500, 0,   0,    0,   0, 'any', 18, { building: { kind: 'pump', interval: 11 }, size: 2 }],
   // —— 法术 ——
   ['freeze',       '冰冻术',   '🧊',  4, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 95, freeze: 2.2 }],
   ['poison',       '毒药',     '☠️', 4, 'spell', 0, 42,  0, 0, 0, 'any', 0, { radius: 95, zone: 'poison', duration: 6 }],
@@ -112,6 +133,13 @@ const CARD_DEFS = [
   ['meteorShower', '流星火雨', '💫',  6, 'spell', 0, 380, 0, 0, 0, 'any', 0, { radius: 110, towerFactor: 0.5 }],
   ['mirror',       '镜像术',   '🪞',  3, 'spell', 0, 0,   0, 0, 0, 'any', 0, { radius: 60 }],
 ];
+/* 卡牌解锁：达到对应奖杯阶段解锁（未列出 = 0，新手训练场可用） */
+const UNLOCK = {};
+['eliteBarbarian', 'skeletonKing', 'valkyrie', 'darkPrince', 'prince', 'shieldMaiden', 'iceGolem', 'miniPekka', 'werewolf', 'goblinGang', 'wizard', 'iceWizard', 'minions', 'bats', 'lightning', 'freeze', 'poison', 'goblinHut'].forEach(id => UNLOCK[id] = 300);
+['goblinThrower', 'knightArcher', 'minionHorde', 'phoenix', 'griffin', 'royalGiant', 'xBow', 'elixirPump', 'rage', 'earthquake'].forEach(id => UNLOCK[id] = 700);
+['pekka', 'babyDragon', 'lavaHound', 'goblinGiant', 'balloon', 'rocket', 'meteorShower', 'mirror'].forEach(id => UNLOCK[id] = 1200);
+['golem', 'giant', 'musketeer'].forEach(id => UNLOCK[id] = 1800);
+function unlocked(id) { return save.trophies >= (UNLOCK[id] || 0); }
 const CARDS = {};
 const DECK = [];
 for (const d of CARD_DEFS) {
@@ -135,9 +163,10 @@ function randomAiDeck() {
   // AI 每局随机携带 8 张：5 单位 + 2 法术 + 1 建筑，保证有攻有守有解场
   const d = [];
   const take = (arr, n) => { let c = 0; for (const id of arr) { if (c >= n) break; if (!d.includes(id)) { d.push(id); c++; } } };
-  take(shuffle(DECK.filter(id => CARDS[id].type === 'unit')), 5);
-  take(shuffle(DECK.filter(id => CARDS[id].type === 'spell')), 2);
-  take(shuffle(DECK.filter(id => CARDS[id].type === 'building')), 1);
+  // AI 只从已解锁的卡中随机（与玩家奖杯进度一致）
+  take(shuffle(DECK.filter(id => unlocked(id) && CARDS[id].type === 'unit')), 5);
+  take(shuffle(DECK.filter(id => unlocked(id) && CARDS[id].type === 'spell')), 2);
+  take(shuffle(DECK.filter(id => unlocked(id) && CARDS[id].type === 'building')), 1);
   return d.slice(0, DECK_SIZE);
 }
 
@@ -198,9 +227,10 @@ function loadSave() {
       match: d.match || null,   // 未完成的对局快照，下次启动可继续
       deck: normalizeDeck(d.deck),   // 我方的 8 张卡组
       deck2: normalizeDeck(d.deck2), // 对方（双人模式玩家2）的 8 张卡组
+      chests: Array.isArray(d.chests) ? d.chests.filter(n => typeof n === 'number') : [],   // 已开启的奖杯宝箱
     };
   } catch (e) { /* 首次游玩或存档损坏 */ }
-  return { v: 1, trophies: 0, gold: 0, levels: {}, stats: { ...STATS_DEFAULT }, match: null, deck: normalizeDeck(null), deck2: normalizeDeck(null) };
+  return { v: 1, trophies: 0, gold: 0, levels: {}, stats: { ...STATS_DEFAULT }, match: null, deck: normalizeDeck(null), deck2: normalizeDeck(null), chests: [] };
 }
 function saveGame() {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* 忽略存储失败 */ }
@@ -234,6 +264,7 @@ function applyImportedSave(d) {
     match: null,   // 导入后不继承旧对局
     deck: normalizeDeck(d.deck),
     deck2: normalizeDeck(d.deck2),
+    chests: Array.isArray(d.chests) ? d.chests.filter(n => typeof n === 'number') : [],
   };
   saveGame();
   return true;
@@ -270,6 +301,7 @@ const lvOf = (id) => save.levels[id] || 1;
 const mult = (lv) => 1 + (lv - 1) * 0.1;
 const upgradeCost = (lv) => 60 * lv;
 function upgradeCard(id) {
+  if (!unlocked(id)) return false;   // 未解锁的卡不能升级
   const lv = lvOf(id);
   if (lv >= MAX_LV) return false;
   const cost = upgradeCost(lv);
@@ -476,10 +508,13 @@ let deckEditMsgT = 0;       // 卡组编辑提示剩余时间
 /* ---------------- 实体 ---------------- */
 function makeTower(team, kind, x, y) {
   const king = kind === 'king';
+  const cy = (F.top + F.bottom) / 2;
+  // 塔攻击范围必须小于到中分线的距离（随战场高度自动收缩）
+  const cap = Math.abs(y - cy) - 10;
   return {
     isTower: true, id: uid++, team, kind, x, y, r: king ? 30 : 26,
     hp: king ? 4200 : 2800, maxHp: king ? 4200 : 2800,
-    dmg: king ? 68 : 52, atk: 0.7, range: king ? 165 : 180,
+    dmg: king ? 68 : 52, atk: 0.7, range: king ? Math.min(165, cap) : Math.min(180, cap),
     cooldown: 0, awake: !king, dead: false,
   };
 }
@@ -532,7 +567,8 @@ function newGame(mode, difficulty) {
   // 卡组：我方用保存的卡组；AI 每局随机 8 张；双人模式双方各自用保存的卡组
   const deck0 = normalizeDeck(save.deck);
   const deck1 = mode === 'pvp' ? normalizeDeck(save.deck2) : randomAiDeck();
-  const aiLv = clamp(Math.round(deck0.reduce((s, id) => s + lvOf(id), 0) / deck0.length), 1, MAX_LV);
+  // AI 等级随难度提高：简单 ×0.9 → 无双 ×1.5
+  const aiLv = clamp(Math.round(deck0.reduce((s, id) => s + lvOf(id), 0) / deck0.length * (0.9 + difficulty * 0.06)), 1, MAX_LV);
   state = {
     mode, difficulty, screen: 'playing', over: false,
     time: MATCH_TIME, elapsed: 0, doubleSaid: false,
@@ -678,7 +714,18 @@ function damageTower(tw, dmg) {
     state.shake = Math.max(state.shake, 10);
     for (let i = 0; i < 34; i++) state.parts.push({ x: tw.x, y: tw.y, vx: rand(-220, 220), vy: rand(-240, 120), g: 420, life: rand(0.5, 1), r: rand(3, 7), col: pick(['#ffdd55', '#ff9933', '#ff5533', '#8a7352', '#fff']) });
     addText(tw.x, tw.y - 26, tw.kind === 'king' ? '国王塔被摧毁!' : '防御塔被摧毁!', '#ff6b5e', 17);
-    if (tw.kind === 'king') endGame(winner, '国王塔被摧毁');
+    if (tw.kind === 'king') {
+      // 国王塔被摧毁：同方守卫塔连带倒塌，获胜方拿到满 3 冠
+      for (const g of state.towers) {
+        if (g.team === tw.team && g.kind === 'guard' && !g.dead) {
+          g.dead = true;
+          state.crowns[winner]++;
+          for (let i = 0; i < 20; i++) state.parts.push({ x: g.x, y: g.y, vx: rand(-180, 180), vy: rand(-200, 100), g: 420, life: rand(0.4, 0.9), r: rand(3, 6), col: pick(['#ffdd55', '#ff9933', '#8a7352', '#fff']) });
+          addText(g.x, g.y - 24, '公主塔倒塌!', '#ff6b5e', 15);
+        }
+      }
+      endGame(winner, '国王塔被摧毁');
+    }
   }
 }
 function damageBuilding(b, dmg) {
@@ -709,12 +756,16 @@ function endGame(winner, reason) {
   // 奖杯与金币、生涯战绩（仅单人模式结算）
   if (state.mode === 'ai') {
     let t = 0, g = 0;
-    if (state.win === 0) { const hard = state.difficulty === 1; t = hard ? 70 : 50; g = hard ? 100 : 80; }
+    if (state.win === 0) { t = 50 + state.difficulty * 10; g = 60 + state.difficulty * 10; }
     else if (state.win === 1) { t = -25; g = 20; }
     else { t = 15; g = 30; }
     save.trophies = Math.max(0, save.trophies + t);
     save.gold += g;
     state.reward = { t, g };
+    // 奖杯宝箱：首次达到对应奖杯阶段自动开启
+    const chests = [];
+    for (const c of CHESTS) if (save.trophies >= c.at && !save.chests.includes(c.at)) { save.chests.push(c.at); save.gold += c.gold; chests.push(c); }
+    if (chests.length) state.reward.chests = chests;
     save.stats.played++;
     if (state.win === 0) save.stats.wins++;
     else if (state.win === 1) save.stats.losses++;
@@ -789,6 +840,7 @@ function updateUnits(dt) {
     if (u.dead) { units.splice(i, 1); continue; }
     // 冰冻：完全停住
     if (u.freeze > 0) { u.freeze -= dt; continue; }
+    const px = u.x;
     u.cooldown -= dt;
     u.lunge = Math.max(0, u.lunge - dt * 3.2);
     u.slowT = Math.max(0, u.slowT - dt);
@@ -811,7 +863,9 @@ function updateUnits(dt) {
       const d = dist2(u.x, u.y, t.x, t.y);
       if (d > rr) {
         const wp = u.card.fly ? null : riverWaypoint(u, t);
-        moveBy(u, wp ? wp.x : t.x, wp ? wp.y : t.y, spd, dt);
+        // 接近攻击位时自然减速（绕桥途中全速，避免卡在桥头）
+        const ease = wp ? 1 : (d < 26 ? 0.55 + 0.45 * (d / 26) : 1);
+        moveBy(u, wp ? wp.x : t.x, wp ? wp.y : t.y, spd * ease, dt);
       } else if (u.cooldown <= 0) {
         u.cooldown = u.card.atk;
         u.lunge = 1;
@@ -823,6 +877,27 @@ function updateUnits(dt) {
     // 兜底：地面单位不得站在桥外的河面上
     if (!u.card.fly && u.y > F.riverTop && u.y < F.riverBot && Math.abs(u.x - BRIDGE_X) > BRIDGE_HALF) {
       u.y = u.team === 0 ? F.riverBot : F.riverTop;
+    }
+    // 面向：按水平移动方向翻转绘制
+    if (Math.abs(u.x - px) > 0.01) u.dir = u.x > px ? 1 : -1;
+  }
+  // 同队单位互相推开，避免完全重叠（河面边缘不推，防止被挤下河）
+  for (let i = 0; i < units.length; i++) {
+    const a = units[i];
+    if (a.dead) continue;
+    for (let j = i + 1; j < units.length; j++) {
+      const b = units[j];
+      if (b.dead || b.team !== a.team) continue;
+      const dd = dist2(a.x, a.y, b.x, b.y);
+      const min = (a.r + b.r) * 0.9;
+      if (dd >= min) continue;
+      if (dd < 0.01) { a.x += 0.5; b.x -= 0.5; continue; }   // 完全重叠时沿水平错开
+      const nearRiver = u => !u.card.fly && u.y > F.riverTop - 16 && u.y < F.riverBot + 16 && Math.abs(u.x - BRIDGE_X) > BRIDGE_HALF;
+      if (nearRiver(a) || nearRiver(b)) continue;
+      const push = (min - dd) * Math.min(1, dt * 4) * 0.5;
+      const nx = (a.x - b.x) / dd, ny = (a.y - b.y) / dd;
+      a.x += nx * push; a.y += ny * push;
+      b.x -= nx * push; b.y -= ny * push;
     }
   }
 }
@@ -1148,7 +1223,9 @@ function update(dt) {
     AudioSys.tone(660, 880, 0.25, 'triangle', 0.5);
   }
   state.elixir[0] = clamp(state.elixir[0] + ELIXIR_RATE * m2 * dt, 0, ELIXIR_MAX);
-  state.elixir[1] = clamp(state.elixir[1] + ELIXIR_RATE * m2 * dt, 0, ELIXIR_MAX);
+  // AI 圣水速率随难度变化：简单 0.9× → 无双 1.15×（双人模式双方一致）
+  const aiRate = state.mode === 'ai' ? 0.9 + state.difficulty * 0.025 : 1;
+  state.elixir[1] = clamp(state.elixir[1] + ELIXIR_RATE * m2 * dt * aiRate, 0, ELIXIR_MAX);
   updateTowers(dt);
   updateUnits(dt);
   updateBuildings(dt);
@@ -1171,8 +1248,8 @@ function aiUpdate(dt) {
   const ai = state.ai;
   ai.t -= dt;
   if (ai.t > 0) return;
-  const easy = state.difficulty === 0;
-  ai.t = easy ? rand(0.8, 1.3) : rand(0.3, 0.55);
+  const d = state.difficulty, tier = d / 10;   // 0=简单 … 1=无双
+  ai.t = rand(0.95, 1.45) - tier * 0.85;       // 反应速度随难度加快
   const el = state.elixir[1];
   const hand = state.hand[1];
   const can = hand.filter(id => CARDS[id].cost <= el);
@@ -1186,7 +1263,7 @@ function aiUpdate(dt) {
   };
 
   // 1) 法术清场：己方半场聚集了敌方单位
-  if (crossed.length >= (easy ? 3 : 2)) {
+  if (crossed.length >= Math.max(2, Math.ceil(3 - tier))) {
     const spell = AI_SPELLS_CLUSTER.find(s => can.includes(s));
     if (spell) {
       const c = centroid(crossed);
@@ -1195,7 +1272,7 @@ function aiUpdate(dt) {
     }
   }
   // 2) 法术终结残血塔
-  const weak = state.towers.filter(t => !t.dead && t.team === 0 && t.hp < (easy ? 300 : 450));
+  const weak = state.towers.filter(t => !t.dead && t.team === 0 && t.hp < 300 + Math.round(250 * tier));
   if (weak.length) {
     const spell = AI_SPELLS_FINISH.find(s => can.includes(s));
     if (spell) {
@@ -1223,7 +1300,7 @@ function aiUpdate(dt) {
   // 5) 防守：敌方单位过河
   if (crossed.length) {
     const threat = crossed.reduce((s, u) => s + u.card.cost, 0);
-    if (threat >= (easy ? 4 : 3)) {
+    if (threat >= Math.max(2.5, 4 - tier * 1.5)) {
       const c = centroid(crossed);
       const lane = c.x < 210 ? 105 : 315;
       const def = AI_DEF_UNITS.find(id => can.includes(id));
@@ -1234,7 +1311,7 @@ function aiUpdate(dt) {
     }
   }
   // 6) 进攻：攒够圣水组织推进
-  if (el >= (easy ? 5.5 : 4.5)) {
+  if (el >= 5.5 - tier * 1.2) {
     const lane = Math.random() < 0.5 ? 105 : 315;
     const tank = AI_PUSH_TANKS.find(id => can.includes(id));
     const id = tank || AI_DEF_UNITS.find(c => can.includes(c));
@@ -1255,6 +1332,29 @@ function drawArena() {
       ctx.fillRect(gx, gy, cell, cell);
     }
   }
+  // 场地装饰：草丛与小花（伪随机固定分布，河面跳过）
+  let seedN = 0;
+  const srand = () => { const s = Math.sin(seedN++ * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 46; i++) {
+    const x = 16 + srand() * (W - 32);
+    const y = F.top + 16 + srand() * (F.bottom - F.top - 32);
+    if (y > F.riverTop - 10 && y < F.riverBot + 10) continue;
+    if (srand() < 0.5) {
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.10 + srand() * 0.10) + ')';
+      ctx.lineWidth = 1.2;
+      for (let b = -1; b <= 1; b++) {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + b * 3.5, y - 4 - srand() * 3);
+        ctx.stroke();
+      }
+    } else {
+      ctx.fillStyle = 'rgba(255,214,120,' + (0.14 + srand() * 0.12) + ')';
+      ctx.beginPath(); ctx.arc(x, y, 1.6 + srand() * 1.2, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  ctx.lineCap = 'butt';
   // 中线
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.lineWidth = 2;
@@ -1283,6 +1383,24 @@ function drawArena() {
   for (let i = 0; i < bh; i += 12) ctx.fillRect(bx, by + i, bw, 2);
   ctx.fillStyle = '#c98d52';
   ctx.fillRect(bx - 4, by, 4, bh); ctx.fillRect(bx + bw, by, 4, bh);
+  // 桥面光影与描边
+  const bg2 = ctx.createLinearGradient(0, by, 0, by + bh);
+  bg2.addColorStop(0, 'rgba(0,0,0,0.18)');
+  bg2.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+  bg2.addColorStop(1, 'rgba(0,0,0,0.18)');
+  ctx.fillStyle = bg2;
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = 'rgba(255,230,180,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(bx + 1, by + 1, bw - 2, bh - 2);
+  // 河面波光（闪烁光点）
+  for (let i = 0; i < 14; i++) {
+    const sx = srand() * W, sy = F.riverTop + 5 + srand() * (F.riverBot - F.riverTop - 10);
+    if (Math.abs(sx - BRIDGE_X) < BRIDGE_HALF + 8) continue;
+    const tw = 0.25 + 0.25 * Math.sin(state.elapsed * 3 + i * 2.1);
+    ctx.fillStyle = 'rgba(255,255,255,' + Math.max(0.05, tw) + ')';
+    ctx.beginPath(); ctx.arc(sx, sy, 1.4, 0, Math.PI * 2); ctx.fill();
+  }
   // 石墙边界
   ctx.strokeStyle = '#8a7352'; ctx.lineWidth = 6;
   ctx.strokeRect(3, F.top + 3, W - 6, F.bottom - F.top - 6);
@@ -1325,6 +1443,13 @@ function drawTower(tw) {
   }
   const stone = '#cbb48f', dark = '#8a7352';
   const col = tw.team === 0 ? '#3d6fe0' : '#d84a42';
+  // 塔身阵营色光晕
+  const glow = ctx.createRadialGradient(tw.x, tw.y, tw.r * 0.4, tw.x, tw.y, tw.r * 2.2);
+  const gc = tw.team === 0 ? '61,111,224' : '216,74,66';
+  glow.addColorStop(0, 'rgba(' + gc + ',0.18)');
+  glow.addColorStop(1, 'rgba(' + gc + ',0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(tw.x, tw.y, tw.r * 2.2, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = 'rgba(0,0,0,0.28)';
   ctx.beginPath(); ctx.ellipse(tw.x, tw.y + tw.r * 0.62, tw.r + 7, tw.r * 0.5, 0, 0, Math.PI * 2); ctx.fill();
   rr(tw.x - tw.r, tw.y - tw.r * 0.45, tw.r * 2, tw.r * 1.75, 6);
@@ -1367,7 +1492,7 @@ function drawUnit(u) {
   const sc = 1 + u.lunge * 0.14;
   ctx.save();
   ctx.translate(u.x, u.y);
-  ctx.scale(sc, sc);
+  ctx.scale(sc * (u.dir < 0 ? -1 : 1), sc);   // 按移动方向水平翻转
   ctx.font = Math.round(u.r * 2.7) + 'px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(u.card.emoji, 0, 2);
@@ -1721,28 +1846,42 @@ function drawMenu() {
     ui.menu.push({ id: b.id, x: bx, y: b.y, w: bw, h: bh });
   }
   const dy = hasMatch ? 478 : 428;
-  const diffs = [['简单', 0], ['困难', 1]];
-  for (let i = 0; i < 2; i++) {
-    const x = W / 2 - 112 + i * 124, w = 100, h = 38;
-    rr(x, dy, w, h, 19);
-    const sel = state.difficulty === diffs[i][1];
-    ctx.fillStyle = sel ? '#3d6fe0' : '#2a3a4e'; ctx.fill();
-    ctx.strokeStyle = sel ? '#7fa8ff' : '#4a5b70'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.font = 'bold 15px "Microsoft YaHei",sans-serif';
-    ctx.fillStyle = sel ? '#fff' : '#8fa3c0';
-    ctx.fillText(diffs[i][0] + (i === 0 ? ' +50🏆' : ' +70🏆'), x + w / 2, dy + h / 2 + 1);
-    ui.menu.push({ id: 'diff' + diffs[i][1], x, y: dy, w, h });
-  }
+  // 难度循环选择：◀ 当前难度（显示该档胜利奖杯）▶
+  const dl = { x: W / 2 - 132, w: 36 }, dc = { x: W / 2 - 92, w: 184 }, dr = { x: W / 2 + 96, w: 36 }, dh = 38;
+  rr(dl.x, dy, dl.w, dh, 19);
+  ctx.fillStyle = '#2a3a4e'; ctx.fill();
+  ctx.strokeStyle = '#4a5b70'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.font = 'bold 18px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle = '#8fa3c0';
+  ctx.fillText('◀', dl.x + dl.w / 2, dy + dh / 2 + 1);
+  ui.menu.push({ id: 'diffl', x: dl.x, y: dy, w: dl.w, h: dh });
+  rr(dc.x, dy, dc.w, dh, 19);
+  ctx.fillStyle = '#3d6fe0'; ctx.fill();
+  ctx.strokeStyle = '#7fa8ff'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.font = 'bold 14px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('⚔ ' + DIFFS[state.difficulty] + ' · +' + (50 + state.difficulty * 10) + '🏆', W / 2, dy + dh / 2 + 1);
+  ui.menu.push({ id: 'diff', x: dc.x, y: dy, w: dc.w, h: dh });
+  rr(dr.x, dy, dr.w, dh, 19);
+  ctx.fillStyle = '#2a3a4e'; ctx.fill();
+  ctx.strokeStyle = '#4a5b70'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#8fa3c0';
+  ctx.fillText('▶', dr.x + dr.w / 2, dy + dh / 2 + 1);
+  ui.menu.push({ id: 'diffr', x: dr.x, y: dy, w: dr.w, h: dh });
+  // 宝箱里程碑一览（达到奖杯自动开启）
+  ctx.font = '10px "Microsoft YaHei",sans-serif';
+  ctx.fillStyle = '#6f829c';
+  ctx.fillText('宝箱 🎁 ' + CHESTS.map(c => (save.trophies >= c.at && !save.chests.includes(c.at) ? '🔔' : save.chests.includes(c.at) ? '✅' : '🔒') + c.at).join(' '), W / 2, dy + dh + 14);
   // 生涯战绩
   const st = save.stats || {};
   ctx.textAlign = 'center';
   ctx.font = '12px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#8fa3c0';
-  ctx.fillText('📊 总场次 ' + (st.played || 0) + ' · 胜 ' + (st.wins || 0) + ' · 负 ' + (st.losses || 0) + ' · 平 ' + (st.draws || 0) + ' · 最高 🏆' + (st.best || save.trophies || 0), W / 2, hasMatch ? 532 : 484);
+  ctx.fillText('📊 总场次 ' + (st.played || 0) + ' · 胜 ' + (st.wins || 0) + ' · 负 ' + (st.losses || 0) + ' · 平 ' + (st.draws || 0) + ' · 最高 🏆' + (st.best || save.trophies || 0), W / 2, hasMatch ? 546 : 498);
   // 当前出战卡组
   ctx.font = '12px "Segoe UI Emoji","Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#a8bcd8';
-  ctx.fillText('出战卡组 ' + save.deck.map(id => CARDS[id] ? CARDS[id].emoji : '❓').join(' '), W / 2, hasMatch ? 548 : 500);
+  ctx.fillText('出战卡组 ' + save.deck.map(id => CARDS[id] ? CARDS[id].emoji : '❓').join(' '), W / 2, hasMatch ? 562 : 514);
   // 存档导入 / 导出
   const eb = [{ id: 'export', label: '📤 导出存档', x: 30 }, { id: 'import', label: '📥 导入存档', x: 220 }];
   for (const b of eb) {
@@ -1761,7 +1900,7 @@ function drawMenu() {
   ctx.fillText('地面单位只能从桥过河 · 飞行单位可任意飞越', W / 2, hy + 20);
   ctx.font = '11px "Microsoft YaHei",sans-serif';
   ctx.fillStyle = '#54687e';
-  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.5', W / 2, H - 24);
+  ctx.fillText('原创 HTML5 Canvas 演示 · 灵感来自皇室战争品类 · v3.6', W / 2, H - 24);
 }
 function deckMaxScroll() {
   const ch = 100, gy = 8, y0 = 84;
@@ -1802,6 +1941,8 @@ function drawDeck() {
     const cx = 30 + (i % 2) * (cw + gx);
     const cy = y0 + Math.floor(i / 2) * (ch + gy) - deckScroll;
     if (cy + ch < y0 || cy > H) continue;   // 视口外跳过
+    const lock = !unlocked(id);
+    if (lock) ctx.globalAlpha = 0.45;   // 未解锁卡牌整体变暗
     rr(cx, cy, cw, ch, 12);
     ctx.fillStyle = '#1c2a3e'; ctx.fill();
     ctx.strokeStyle = '#40556e'; ctx.lineWidth = 1.5; ctx.stroke();
@@ -1828,15 +1969,16 @@ function drawDeck() {
     rr(ubx, uby, ubw, ubh, 10);
     const maxed = lv >= MAX_LV;
     const afford = save.gold >= upgradeCost(lv);
-    ctx.fillStyle = maxed ? '#3a3a20' : afford ? '#3d6fe0' : '#2a3a4e';
+    ctx.fillStyle = lock ? '#3a2f1e' : maxed ? '#3a3a20' : afford ? '#3d6fe0' : '#2a3a4e';
     ctx.fill();
-    ctx.strokeStyle = maxed ? '#8a7a20' : afford ? '#7fa8ff' : '#4a5b70';
+    ctx.strokeStyle = lock ? '#8a6a30' : maxed ? '#8a7a20' : afford ? '#7fa8ff' : '#4a5b70';
     ctx.lineWidth = 1.5; ctx.stroke();
     ctx.textAlign = 'center';
     ctx.font = 'bold 12px "Microsoft YaHei",sans-serif';
-    ctx.fillStyle = maxed ? '#ffd94d' : afford ? '#fff' : '#6f829c';
-    ctx.fillText(maxed ? '★ 已满级' : '升级 🪙' + upgradeCost(lv), cx + cw / 2, uby + ubh / 2 + 1);
+    ctx.fillStyle = lock ? '#ffb74d' : maxed ? '#ffd94d' : afford ? '#fff' : '#6f829c';
+    ctx.fillText(lock ? '🔒 ' + (UNLOCK[id] || 0) + '🏆 解锁' : maxed ? '★ 已满级' : '升级 🪙' + upgradeCost(lv), cx + cw / 2, uby + ubh / 2 + 1);
     ui.deck.push({ id: 'up:' + id, x: ubx, y: uby, w: ubw, h: ubh });
+    if (lock) ctx.globalAlpha = 1;
   }
   // 滚动条
   if (maxScroll > 0) {
@@ -1849,6 +1991,12 @@ function drawDeck() {
   }
 }
 function deckToggle(id) {
+  if (!unlocked(id)) {
+    deckEditMsg = CARDS[id].name + ' 需 ' + (UNLOCK[id] || 0) + ' 🏆 解锁';
+    deckEditMsgT = 1.4;
+    AudioSys.tone(300, 200, 0.15, 'square', 0.3);
+    return;
+  }
   const i = deckSel.indexOf(id);
   if (i >= 0) {
     deckSel.splice(i, 1);
@@ -1915,9 +2063,11 @@ function drawDeckEdit() {
     const id = DECK[i];
     const card = CARDS[id];
     const sel = deckSel.includes(id);
+    const lock = !unlocked(id);
+    if (lock) ctx.globalAlpha = 0.5;   // 未解锁卡牌整体变暗
     const cx = 30 + (i % 2) * (cw + gx);
     const cy = y0 + Math.floor(i / 2) * (ch + gy) - deckEditScroll;
-    if (cy + ch < y0 || cy + ch > gridBottom) continue;   // 视口外或会压到保存按钮的格子跳过
+    if (cy + ch < y0 || cy + ch > gridBottom) { ctx.globalAlpha = 1; continue; }   // 视口外或会压到保存按钮的格子跳过
     rr(cx, cy, cw, ch, 12);
     ctx.fillStyle = sel ? '#1e3a2e' : '#1c2a3e'; ctx.fill();
     ctx.strokeStyle = sel ? '#5ec878' : '#40556e'; ctx.lineWidth = sel ? 2.5 : 1.5; ctx.stroke();
@@ -1944,6 +2094,12 @@ function drawDeckEdit() {
     if (card.type === 'unit') kind = card.fly ? '飞行单位' : card.targets === 'buildings' ? '地面单位 · 攻建筑' : '地面单位';
     else kind = card.type === 'building' ? '建筑' : '法术';
     ctx.fillText(kind, cx + 10, cy + 54);
+    // 未解锁提示
+    if (lock) {
+      ctx.font = 'bold 10px "Microsoft YaHei",sans-serif';
+      ctx.fillStyle = '#ffb74d';
+      ctx.fillText('🔒 ' + (UNLOCK[id] || 0) + '🏆 解锁', cx + 10, cy + 68);
+    }
     // 已选角标
     if (sel) {
       ctx.beginPath();
@@ -1953,6 +2109,7 @@ function drawDeckEdit() {
       ctx.fillStyle = '#06240f';
       ctx.fillText('✓', cx + cw - 20, cy + ch - 19);
     }
+    if (lock) ctx.globalAlpha = 1;
     ui.deckedit.push({ id: 'sel:' + id, x: cx, y: cy, w: cw, h: ch });
   }
   // 滚动条
@@ -1987,7 +2144,7 @@ function drawOver() {
   ui.over = [];
   ctx.fillStyle = 'rgba(8,12,22,0.78)';
   ctx.fillRect(0, 0, W, H);
-  const px = 62, py = 216, pw = W - 124, ph = 300;
+  const px = 62, py = 216, pw = W - 124, ph = 330;
   rr(px, py, pw, ph, 16);
   ctx.fillStyle = '#1c2a3e'; ctx.fill();
   ctx.strokeStyle = '#40556e'; ctx.lineWidth = 2; ctx.stroke();
@@ -2009,8 +2166,16 @@ function drawOver() {
     ctx.font = 'bold 16px "Microsoft YaHei",sans-serif';
     ctx.fillStyle = state.reward.t >= 0 ? '#ffd94d' : '#ff8a80';
     ctx.fillText((state.reward.t >= 0 ? '+' : '') + state.reward.t + ' 🏆   +' + state.reward.g + ' 🪙', W / 2, py + 184);
+    // 达到奖杯里程碑自动开启的宝箱
+    if (state.reward.chests && state.reward.chests.length) {
+      const names = state.reward.chests.map(c => '开启「' + c.name + '」+🪙' + c.gold);
+      const lines = names.length <= 2 ? [names.join('　')] : [names.slice(0, 3).join('　'), names.slice(3).join('　')];
+      ctx.font = 'bold 12px "Microsoft YaHei",sans-serif';
+      ctx.fillStyle = '#ffb74d';
+      lines.forEach((ln, i) => ctx.fillText('🎁 ' + ln, W / 2, py + 197 + i * 18));
+    }
   }
-  const bs = [['replay', '再来一局', py + 208], ['menu', '返回主菜单', py + 256]];
+  const bs = [['replay', '再来一局', py + 226], ['menu', '返回主菜单', py + 274]];
   for (const b of bs) {
     const id = b[0], label = b[1], by = b[2], bw = 200, bh = 42, bx2 = W / 2 - bw / 2;
     rr(bx2, by, bw, bh, 21);
@@ -2042,6 +2207,12 @@ function render() {
   drawParticles();
   for (const tw of state.towers) if (tw.dead) drawTower(tw);
   ctx.restore();
+  // 画面暗角（提升质感）
+  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.36, W / 2, H / 2, H * 0.78);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.22)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
   drawHUD();
   drawDrags();
   drawKbCursor();
@@ -2082,8 +2253,8 @@ canvas.addEventListener('pointerdown', (e) => {
       else if (b.id === 'pvp') newGame('pvp', state.difficulty);
       else if (b.id === 'deck') state.screen = 'deck';
       else if (b.id === 'deckedit') { deckSel = save.deck.slice(); deckEditTeam = 0; deckEditScroll = 0; deckEditMsg = ''; deckEditMsgT = 0; state.screen = 'deckedit'; }
-      else if (b.id === 'diff0') state.difficulty = 0;
-      else if (b.id === 'diff1') state.difficulty = 1;
+      else if (b.id === 'diffl') state.difficulty = (state.difficulty + DIFFS.length - 1) % DIFFS.length;
+      else if (b.id === 'diffr' || b.id === 'diff') state.difficulty = (state.difficulty + 1) % DIFFS.length;
       else if (b.id === 'resume') restoreMatch(save.match);
       else if (b.id === 'export') exportSave();
       else if (b.id === 'import') importSave();
